@@ -45,6 +45,29 @@ binding decisions.
   zoneinfo.
 - **Backfill tool** (`cmd/backfill`): one-off import of pre-existing HA/Beszel
   history, not part of the running service.
+- **Published**: `github.com/ferrets6/wattson` (private), deployed on the
+  NAS via the `homelab` repo.
+- **`SQLITE_BUSY` under concurrent writers** (2026-09-19): `busy_timeout(5000)`
+  alone didn't fully eliminate `database is locked (5)` errors in
+  production — a lock held a bit too long (e.g. during a WAL checkpoint)
+  could still outlast it. Root cause: `database/sql`'s connection pool had
+  no cap, so concurrent writers (MQTT collector, Beszel/HA pollers, rollup)
+  could each get a *separate* SQLite connection and contend for the single
+  writer slot across OS-level locks instead of queuing in-process. Fixed
+  with `db.SetMaxOpenConns(1)` in `store.Open` — the standard fix for
+  SQLite, which has no real concurrent-writer support regardless of
+  application-level pooling.
+  That cap exposed two **latent deadlocks** that would otherwise have gone
+  unnoticed: `rollup.rollupResources` and `api.summaryFor` each issued a
+  second query/exec while their own `*sql.Rows` was still open on the same
+  `*sql.DB` — with only one connection available, the nested call blocked
+  forever waiting for a connection the still-open `Rows` was pinning. Both
+  now fully buffer their `SELECT` results before issuing any further
+  query. Verified the failure mode was real (not theoretical) by
+  temporarily reverting each fix with the pool cap in place and confirming
+  both hang; a concurrency regression test
+  (`store.TestConcurrentWritesDoNotFailWithSQLiteBusy`) now guards the
+  original bug report.
 
 ## Open
 
@@ -65,9 +88,3 @@ binding decisions.
 - Uptime Kuma monitor.
 - ZFS dataset + sanoid + backup; entries in `docs/services.md`,
   `docs/data-map.md`, `docs/decisions.md`.
-
-## GitHub publication
-
-- Create `github.com/ferrets6/wattson` (confirm with the user before the
-  first push).
-- First commit + push.

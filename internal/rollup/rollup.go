@@ -198,6 +198,12 @@ type containerRollup struct {
 
 // rollupResources aggregates resource_samples (every container, including
 // __host__) into resource_hourly, and returns the values just written.
+//
+// The SELECT results are fully buffered before any INSERT runs: with the DB
+// pool capped at one connection (see store.Open), writing while the SELECT's
+// *sql.Rows is still open would deadlock — that Rows pins the only
+// connection, so the nested db.Exec would block forever waiting for a
+// connection nothing will ever release.
 func rollupResources(db *sql.DB, bucketStart, bucketEnd int64) ([]containerRollup, error) {
 	rows, err := db.Query(
 		`SELECT container, AVG(cpu_pct), AVG(mem_used), AVG(net_sent_bytes), AVG(net_recv_bytes), AVG(disk_io_bytes)
@@ -207,28 +213,39 @@ func rollupResources(db *sql.DB, bucketStart, bucketEnd int64) ([]containerRollu
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var result []containerRollup
+	type aggregate struct {
+		container                              string
+		cpuAvg, memAvg, netSentAvg, netRecvAvg sql.NullFloat64
+		diskAvg                                sql.NullFloat64
+	}
+	var aggregates []aggregate
 	for rows.Next() {
-		var (
-			container                              string
-			cpuAvg, memAvg, netSentAvg, netRecvAvg sql.NullFloat64
-			diskAvg                                sql.NullFloat64
-		)
-		if err := rows.Scan(&container, &cpuAvg, &memAvg, &netSentAvg, &netRecvAvg, &diskAvg); err != nil {
+		var a aggregate
+		if err := rows.Scan(&a.container, &a.cpuAvg, &a.memAvg, &a.netSentAvg, &a.netRecvAvg, &a.diskAvg); err != nil {
+			rows.Close()
 			return nil, err
 		}
+		aggregates = append(aggregates, a)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	result := make([]containerRollup, 0, len(aggregates))
+	for _, a := range aggregates {
 		if _, err := db.Exec(
 			`INSERT OR REPLACE INTO resource_hourly (bucket_start, container, cpu_avg, mem_used_avg, net_sent_bytes_avg, net_recv_bytes_avg, disk_io_bytes_avg)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			bucketStart, container, cpuAvg.Float64, memAvg.Float64, netSentAvg.Float64, netRecvAvg.Float64, nullableFloat(diskAvg),
+			bucketStart, a.container, a.cpuAvg.Float64, a.memAvg.Float64, a.netSentAvg.Float64, a.netRecvAvg.Float64, nullableFloat(a.diskAvg),
 		); err != nil {
 			return nil, err
 		}
-		result = append(result, containerRollup{name: container, cpuAvg: cpuAvg.Float64})
+		result = append(result, containerRollup{name: a.container, cpuAvg: a.cpuAvg.Float64})
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func nullableFloat(v sql.NullFloat64) any {

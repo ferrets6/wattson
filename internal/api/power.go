@@ -145,23 +145,41 @@ func powerSummaryHandler(db *sql.DB, defaultSpread float64) http.HandlerFunc {
 // summaryFor sums kWh and cost for the hours in [fromTS, toTS) using resolve
 // for each hour's price. Shared by /power/summary and /pricing/preview: only
 // the price resolution differs (saved periods vs. a hypothetical override).
+//
+// The SELECT results are fully buffered before calling resolve: with the DB
+// pool capped at one connection (see store.Open), resolve's own queries
+// (pricing.Resolve reads pricing_periods/pun_prices) would deadlock while
+// this function's own *sql.Rows is still open and pinning that connection.
 func summaryFor(db *sql.DB, fromTS, toTS int64, resolve func(time.Time) (pricing.Result, error)) (summaryPeriod, error) {
 	rows, err := db.Query(`SELECT bucket_start, kwh FROM power_hourly WHERE bucket_start >= ? AND bucket_start < ?`, fromTS, toTS)
 	if err != nil {
 		return summaryPeriod{}, err
 	}
-	defer rows.Close()
 
-	result := summaryPeriod{Complete: true}
+	type bucket struct {
+		start int64
+		kwh   float64
+	}
+	var buckets []bucket
 	for rows.Next() {
-		var bucketStart int64
-		var kwh float64
-		if err := rows.Scan(&bucketStart, &kwh); err != nil {
+		var b bucket
+		if err := rows.Scan(&b.start, &b.kwh); err != nil {
+			rows.Close()
 			return summaryPeriod{}, err
 		}
-		result.KWh += kwh
+		buckets = append(buckets, b)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return summaryPeriod{}, err
+	}
+	rows.Close()
 
-		price, err := resolve(time.Unix(bucketStart, 0))
+	result := summaryPeriod{Complete: true}
+	for _, b := range buckets {
+		result.KWh += b.kwh
+
+		price, err := resolve(time.Unix(b.start, 0))
 		if err != nil {
 			return summaryPeriod{}, err
 		}
@@ -172,9 +190,9 @@ func summaryFor(db *sql.DB, fromTS, toTS int64, resolve func(time.Time) (pricing
 		if price.Provisional {
 			result.Provisional = true
 		}
-		result.CostEur += kwh * price.EurPerKwh
+		result.CostEur += b.kwh * price.EurPerKwh
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // parseUnixRange reads from/to (unix seconds) from the query string, writing

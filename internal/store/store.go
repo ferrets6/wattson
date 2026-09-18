@@ -16,13 +16,35 @@ var migrationsFS embed.FS
 // Open opens (or creates) the SQLite database at dbPath and applies any
 // pending migrations.
 func Open(dbPath string) (*sql.DB, error) {
-	// busy_timeout: without it, the MQTT collector and the Beszel poller
-	// (separate goroutines, both writing) hit SQLITE_BUSY immediately
-	// whenever their writes overlap, instead of waiting for each other.
+	// busy_timeout: without it, two SQLite connections writing around the
+	// same time fail with SQLITE_BUSY immediately instead of one waiting for
+	// the other.
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
+
+	// SQLite only ever allows one writer at a time; letting database/sql's
+	// pool open more than one connection just means concurrent writers
+	// (MQTT collector, Beszel/HA pollers, rollup) contend for that single
+	// writer slot across separate OS-level file locks instead of queuing
+	// in-process. busy_timeout(5000) alone didn't fully eliminate the
+	// resulting SQLITE_BUSY errors in production (a lock held a little
+	// too long — e.g. during a WAL checkpoint — still lost the race).
+	// Capping the pool at one connection removes the multi-connection
+	// contention entirely: every access serializes through Go's own
+	// (fast, in-process) connection checkout instead of SQLite's
+	// cross-connection busy-retry loop.
+	//
+	// This makes a correctness assumption the rest of the codebase must
+	// hold: no query may keep a *sql.Rows open while issuing another
+	// query/exec on the same *sql.DB, or that second call blocks forever
+	// waiting for the only connection, which the still-open Rows is
+	// pinning (see rollup.rollupResources and api.summaryFor, both fixed
+	// to fully buffer a SELECT's results before writing/querying again).
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrating: %w", err)
