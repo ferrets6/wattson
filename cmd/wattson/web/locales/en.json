@@ -1,0 +1,75 @@
+{
+  "app.title": "Wattson",
+  "app.subtitle": "NAS power consumption — wattmeter + estimated attribution",
+
+  "kpi.aria_label": "Main indicators",
+  "kpi.power": "Current power",
+  "kpi.cost_today": "Cost today",
+  "kpi.cost_month": "Cost for {{month}}",
+  "kpi.daily_avg": "Daily average (this month)",
+  "kpi.current_price": "Current price",
+
+  "badge.stale": "STALE DATA",
+  "badge.incomplete": "INCOMPLETE",
+  "badge.estimate": "ESTIMATE",
+
+  "price.na": "n/a",
+  "price.no_pun": "no PUN data available",
+  "price.source.fixed_override": "fixed price",
+  "price.source.spread_override": "custom period",
+  "price.source.default": "monthly PUN + default spread",
+  "price.provisional_suffix": "{{source}} · provisional estimate, refined at month end",
+
+  "range.today": "Today",
+  "range.week": "7 days",
+  "range.month": "30 days",
+
+  "chart.power_title": "Power (W)",
+  "chart.energy_title": "Hourly energy (kWh)",
+
+  "breakdown.title": "Breakdown by category/service",
+  "breakdown.note": "Energy (kWh) allocated in the selected period, estimated as follows: when total consumption exceeds the idle baseline, the surplus is attributed to the container with the highest CPU peak that hour. It's a heuristic correlation estimate, not a direct per-container measurement (the wattmeter only measures the total).",
+
+  "table.container": "Container",
+  "table.category": "Category",
+  "table.energy_allocated": "Energy allocated",
+  "table.percent": "%",
+  "table.no_data": "No data yet for this period.",
+
+  "category.system": "System",
+  "category.user": "User",
+  "category.unknown": "Unknown",
+
+  "pricing.title": "Pricing periods",
+  "pricing.add_button": "+ New period",
+  "pricing.note": "If no period is active, monthly PUN + default spread is used (see \"Current price\" above).",
+
+  "table.from": "From",
+  "table.to": "To",
+  "table.mode": "Mode",
+  "table.value": "Value",
+  "table.note": "Note",
+  "table.no_periods": "No custom period: PUN + default spread is used.",
+
+  "mode.fixed": "Fixed",
+  "mode.spread": "Spread",
+  "action.edit": "edit",
+  "action.delete": "delete",
+  "confirm.delete_period": "Delete this period?",
+
+  "form.from": "From",
+  "form.to": "To (empty = no expiry)",
+  "form.mode": "Mode",
+  "form.mode.spread_override": "Custom spread (PUN + spread)",
+  "form.mode.fixed_override": "Fixed price",
+  "form.spread": "Spread (€/kWh)",
+  "form.fixed_price": "Fixed price (€/kWh)",
+  "form.note": "Note (optional)",
+  "form.note_placeholder": "e.g. renewed contract",
+  "form.save": "Save period",
+  "form.cancel": "cancel",
+  "form.save_failed": "save failed",
+
+  "preview.title": "Estimated cost for this period",
+  "preview.incomplete_suffix": "(incomplete)"
+}

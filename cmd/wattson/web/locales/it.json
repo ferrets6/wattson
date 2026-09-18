@@ -1,0 +1,75 @@
+{
+  "app.title": "Wattson",
+  "app.subtitle": "Consumi energetici del NAS — wattmetro + stima di attribuzione",
+
+  "kpi.aria_label": "Indicatori principali",
+  "kpi.power": "Potenza istantanea",
+  "kpi.cost_today": "Costo oggi",
+  "kpi.cost_month": "Costo di {{month}}",
+  "kpi.daily_avg": "Media giornaliera (mese)",
+  "kpi.current_price": "Prezzo attuale",
+
+  "badge.stale": "DATO VECCHIO",
+  "badge.incomplete": "INCOMPLETO",
+  "badge.estimate": "STIMA",
+
+  "price.na": "n/d",
+  "price.no_pun": "nessun dato PUN disponibile",
+  "price.source.fixed_override": "prezzo fisso",
+  "price.source.spread_override": "periodo custom",
+  "price.source.default": "PUN mensile + spread default",
+  "price.provisional_suffix": "{{source}} · stima provvisoria, si affina a fine mese",
+
+  "range.today": "Oggi",
+  "range.week": "7 giorni",
+  "range.month": "30 giorni",
+
+  "chart.power_title": "Potenza (W)",
+  "chart.energy_title": "Energia oraria (kWh)",
+
+  "breakdown.title": "Breakdown per categoria/servizio",
+  "breakdown.note": "Energia (kWh) allocata nel periodo selezionato, stimata così: quando il consumo totale supera la soglia di base, il surplus viene attribuito al container con il picco di CPU più alto in quell'ora. È una stima euristica per correlazione, non una misura diretta per container (il wattmetro misura solo il totale).",
+
+  "table.container": "Container",
+  "table.category": "Categoria",
+  "table.energy_allocated": "Energia allocata",
+  "table.percent": "%",
+  "table.no_data": "Nessun dato ancora per questo periodo.",
+
+  "category.system": "Sistema",
+  "category.user": "Utente",
+  "category.unknown": "Sconosciuto",
+
+  "pricing.title": "Periodi di prezzo",
+  "pricing.add_button": "+ Nuovo periodo",
+  "pricing.note": "Se non c'è un periodo attivo si usa PUN mensile + spread di default (vedi \"Prezzo attuale\" sopra).",
+
+  "table.from": "Dal",
+  "table.to": "Al",
+  "table.mode": "Modo",
+  "table.value": "Valore",
+  "table.note": "Nota",
+  "table.no_periods": "Nessun periodo custom: si usa PUN + spread di default.",
+
+  "mode.fixed": "Fisso",
+  "mode.spread": "Spread",
+  "action.edit": "modifica",
+  "action.delete": "elimina",
+  "confirm.delete_period": "Eliminare questo periodo?",
+
+  "form.from": "Dal",
+  "form.to": "Al (vuoto = senza scadenza)",
+  "form.mode": "Modo",
+  "form.mode.spread_override": "Spread custom (PUN + spread)",
+  "form.mode.fixed_override": "Prezzo fisso",
+  "form.spread": "Spread (€/kWh)",
+  "form.fixed_price": "Prezzo fisso (€/kWh)",
+  "form.note": "Nota (opzionale)",
+  "form.note_placeholder": "es. contratto rinnovato",
+  "form.save": "Salva periodo",
+  "form.cancel": "annulla",
+  "form.save_failed": "salvataggio fallito",
+
+  "preview.title": "Anteprima costo nel periodo",
+  "preview.incomplete_suffix": "(incompleto)"
+}

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wattson</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <div>
+        <h1 data-i18n="app.title">Wattson</h1>
+        <p data-i18n="app.subtitle">NAS power consumption — wattmeter + estimated attribution</p>
+      </div>
+      <select id="localeSwitcher" aria-label="Language">
+        <option value="en">English</option>
+        <option value="it">Italiano</option>
+      </select>
+    </div>
+  </header>
+  <main>
+    <section class="kpi-row" id="kpiRow" aria-label="Main indicators">
+      <div class="stat-tile">
+        <div class="label" data-i18n="kpi.power">Current power</div>
+        <div class="value" id="kpiPower">&ndash;</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label" data-i18n="kpi.cost_today">Cost today</div>
+        <div class="value" id="kpiCostToday">&ndash;</div>
+        <div class="sub" id="kpiKwhToday"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label" id="kpiCostMonthLabel">Cost this month</div>
+        <div class="value" id="kpiCostMonth">&ndash;</div>
+        <div class="sub" id="kpiKwhMonth"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label" data-i18n="kpi.daily_avg">Daily average (this month)</div>
+        <div class="value" id="kpiDailyAvg">&ndash;</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label" data-i18n="kpi.current_price">Current price</div>
+        <div class="value" id="kpiCurrentPrice">&ndash;</div>
+        <div class="sub" id="kpiCurrentPriceSub"></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="range-picker" id="rangePicker">
+        <button data-range="today" class="active" data-i18n="range.today">Today</button>
+        <button data-range="week" data-i18n="range.week">7 days</button>
+        <button data-range="month" data-i18n="range.month">30 days</button>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h2 data-i18n="chart.power_title">Power (W)</h2>
+          <canvas id="powerChart" height="90"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2 data-i18n="chart.energy_title">Hourly energy (kWh)</h2>
+          <canvas id="costChart" height="90"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="breakdown-h">
+      <h2 id="breakdown-h" data-i18n="breakdown.title">Breakdown by category/service</h2>
+      <p class="estimate-note" data-i18n="breakdown.note">Estimate note</p>
+
+      <div class="legend-row" id="categoryLegend"></div>
+      <div class="chart-card" style="margin-bottom:16px;">
+        <canvas id="categoryChart" height="60"></canvas>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.container">Container</th>
+            <th data-i18n="table.category">Category</th>
+            <th class="num" data-i18n="table.energy_allocated">Energy allocated</th>
+            <th class="num" data-i18n="table.percent">%</th>
+          </tr>
+        </thead>
+        <tbody id="containerTableBody"></tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="pricing-h">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <h2 id="pricing-h" style="margin:0;" data-i18n="pricing.title">Pricing periods</h2>
+        <button type="button" class="icon-btn" id="addPeriodBtn" style="font-size:13px;" data-i18n="pricing.add_button">+ New period</button>
+      </div>
+      <p class="estimate-note" data-i18n="pricing.note">Pricing note</p>
+
+      <div class="card" style="margin-bottom:16px;">
+        <table>
+          <thead>
+            <tr>
+              <th data-i18n="table.from">From</th>
+              <th data-i18n="table.to">To</th>
+              <th data-i18n="table.mode">Mode</th>
+              <th class="num" data-i18n="table.value">Value</th>
+              <th data-i18n="table.note">Note</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="periodsTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card" id="periodFormCard" style="display:none;">
+        <form class="period-form" id="periodForm">
+          <input type="hidden" id="periodId" />
+          <div class="row-2">
+            <div>
+              <label for="validFrom" data-i18n="form.from">From</label>
+              <input type="date" id="validFrom" required />
+            </div>
+            <div>
+              <label for="validUntil" data-i18n="form.to">To (empty = no expiry)</label>
+              <input type="date" id="validUntil" />
+            </div>
+          </div>
+          <div>
+            <label for="mode" data-i18n="form.mode">Mode</label>
+            <select id="mode">
+              <option value="spread_override" data-i18n="form.mode.spread_override">Custom spread (PUN + spread)</option>
+              <option value="fixed_override" data-i18n="form.mode.fixed_override">Fixed price</option>
+            </select>
+          </div>
+          <div id="spreadField">
+            <label for="spreadValue" data-i18n="form.spread">Spread (€/kWh)</label>
+            <input type="number" step="0.001" id="spreadValue" value="0.10" />
+          </div>
+          <div id="fixedField" style="display:none;">
+            <label for="fixedPrice" data-i18n="form.fixed_price">Fixed price (€/kWh)</label>
+            <input type="number" step="0.001" id="fixedPrice" value="0.25" />
+          </div>
+          <div>
+            <label for="note" data-i18n="form.note">Note (optional)</label>
+            <input type="text" id="note" data-i18n-placeholder="form.note_placeholder" placeholder="e.g. renewed contract" />
+          </div>
+          <div class="error-text" id="periodFormError"></div>
+          <div style="display:flex; gap:8px;">
+            <button type="submit" data-i18n="form.save">Save period</button>
+            <button type="button" class="icon-btn" id="cancelPeriodBtn" data-i18n="form.cancel">cancel</button>
+          </div>
+        </form>
+
+        <div class="preview-box" id="previewBox" style="display:none;">
+          <div class="label" style="color:var(--text-secondary); font-size:12px;" data-i18n="preview.title">Estimated cost for this period</div>
+          <div class="cost" id="previewCost">&ndash;</div>
+          <div class="sub" id="previewKwh" style="color:var(--text-muted); font-size:12px;"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

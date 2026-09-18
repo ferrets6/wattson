@@ -1,0 +1,8 @@
+.git
+.env
+*.db
+*.db-shm
+*.db-wal
+/bin
+wattson.exe
+/attribution.json
