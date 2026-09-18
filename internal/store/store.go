@@ -16,7 +16,10 @@ var migrationsFS embed.FS
 // Open opens (or creates) the SQLite database at dbPath and applies any
 // pending migrations.
 func Open(dbPath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
+	// busy_timeout: without it, the MQTT collector and the Beszel poller
+	// (separate goroutines, both writing) hit SQLITE_BUSY immediately
+	// whenever their writes overlap, instead of waiting for each other.
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
