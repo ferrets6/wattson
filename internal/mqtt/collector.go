@@ -2,7 +2,9 @@
 package mqtt
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -33,7 +35,11 @@ func New(db *sql.DB, cfg Config) *Collector {
 
 	opts := paho.NewClientOptions().
 		AddBroker(cfg.BrokerURL).
-		SetClientID("wattson-collector").
+		// A fixed client ID collides with any other instance connecting to the
+		// same broker (dev, a stray leftover process, ...): the broker just
+		// kicks whichever session is older, and both sides loop forever
+		// retrying. Random per-process suffix avoids that class of bug outright.
+		SetClientID("wattson-collector-" + randomSuffix()).
 		SetUsername(cfg.Username).
 		SetPassword(cfg.Password).
 		SetAutoReconnect(true).
@@ -68,6 +74,12 @@ func (c *Collector) Start() error {
 
 func (c *Collector) Stop() {
 	c.client.Disconnect(250)
+}
+
+func randomSuffix() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func (c *Collector) handleMessage(_ paho.Client, msg paho.Message) {
