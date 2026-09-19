@@ -4,7 +4,7 @@
 
   "kpi.aria_label": "Indicatori principali",
   "kpi.power": "Potenza istantanea",
-  "kpi.cost_today": "Costo oggi",
+  "kpi.cost_24h": "Costo (ultime 24h)",
   "kpi.cost_month": "Costo di {{month}}",
   "kpi.daily_avg": "Media giornaliera (mese)",
   "kpi.current_price": "Prezzo attuale",
@@ -25,7 +25,7 @@
   "range.month": "30 giorni",
 
   "chart.power_title": "Potenza (W)",
-  "chart.energy_title": "Energia oraria (kWh)",
+  "chart.cpu_title": "Utilizzo CPU (%)",
 
   "breakdown.title": "Breakdown per categoria/servizio",
   "breakdown.note": "Energia (kWh) allocata nel periodo selezionato, stimata così: quando il consumo totale supera la soglia di base, il surplus viene attribuito al container con il picco di CPU più alto in quell'ora. È una stima euristica per correlazione, non una misura diretta per container (il wattmetro misura solo il totale).",
@@ -35,6 +35,7 @@
   "table.energy_allocated": "Energia allocata",
   "table.percent": "%",
   "table.no_data": "Nessun dato ancora per questo periodo.",
+  "table.baseline_row": "Consumo base (idle)",
 
   "category.system": "Sistema",
   "category.user": "Utente",

@@ -12,7 +12,7 @@
   --cat-system: #2a78d6; /* categorical slot 1: blue */
   --cat-user: #eb6834; /* categorical slot 2: orange */
   --cat-unknown: #1baf7a; /* categorical slot 3: aqua */
-  --cost-line: #eb6834;
+  --cpu-line: #eb6834;
   --power-line: #2a78d6;
   --success: #006300;
   --danger: #e34948;
@@ -33,7 +33,7 @@
     --cat-system: #3987e5;
     --cat-user: #d95926;
     --cat-unknown: #199e70;
-    --cost-line: #d95926;
+    --cpu-line: #d95926;
     --power-line: #3987e5;
     --success: #0ca30c;
     --danger: #e66767;
@@ -127,6 +127,27 @@ section h2 {
   margin-top: 2px;
 }
 
+.pulse-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 8px;
+  vertical-align: middle;
+  background: var(--baseline);
+  transition: background-color 0.4s ease;
+}
+
+.pulse-dot.pulse-flash {
+  background: var(--success);
+  animation: pulse-fade 1.2s ease-out;
+}
+
+@keyframes pulse-fade {
+  0% { box-shadow: 0 0 0 0 rgba(0, 150, 0, 0.5); }
+  100% { box-shadow: 0 0 0 6px rgba(0, 150, 0, 0); }
+}
+
 .badge-stale {
   display: inline-block;
   margin-left: 6px;
@@ -180,6 +201,29 @@ section h2 {
 
 @media (max-width: 720px) {
   .charts-grid { grid-template-columns: 1fr; }
+}
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll table {
+  min-width: 480px;
+}
+
+@media (max-width: 600px) {
+  .kpi-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  /* First 4 tiles (power, 24h cost, daily avg, month cost) sit 2-by-2;
+     "current price" (5th) spans full width below them. */
+  .kpi-row .stat-tile:nth-child(5) {
+    grid-column: 1 / -1;
+  }
+  .stat-tile { padding: 10px 12px; }
+  .stat-tile .value { font-size: 20px; }
+  .badge-stale { font-size: 9px; padding: 1px 4px; white-space: normal; }
 }
 
 .estimate-note {

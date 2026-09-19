@@ -25,21 +25,21 @@
     <section class="kpi-row" id="kpiRow" aria-label="Main indicators">
       <div class="stat-tile">
         <div class="label" data-i18n="kpi.power">Current power</div>
-        <div class="value" id="kpiPower">&ndash;</div>
+        <div class="value" id="kpiPower">&ndash;<span class="pulse-dot" id="kpiPulse" title="Updates when a new reading arrives"></span></div>
       </div>
       <div class="stat-tile">
-        <div class="label" data-i18n="kpi.cost_today">Cost today</div>
+        <div class="label" data-i18n="kpi.cost_24h">Cost (last 24h)</div>
         <div class="value" id="kpiCostToday">&ndash;</div>
         <div class="sub" id="kpiKwhToday"></div>
+      </div>
+      <div class="stat-tile">
+        <div class="label" data-i18n="kpi.daily_avg">Daily average (this month)</div>
+        <div class="value" id="kpiDailyAvg">&ndash;</div>
       </div>
       <div class="stat-tile">
         <div class="label" id="kpiCostMonthLabel">Cost this month</div>
         <div class="value" id="kpiCostMonth">&ndash;</div>
         <div class="sub" id="kpiKwhMonth"></div>
-      </div>
-      <div class="stat-tile">
-        <div class="label" data-i18n="kpi.daily_avg">Daily average (this month)</div>
-        <div class="value" id="kpiDailyAvg">&ndash;</div>
       </div>
       <div class="stat-tile">
         <div class="label" data-i18n="kpi.current_price">Current price</div>
@@ -61,8 +61,8 @@
           <canvas id="powerChart" height="90"></canvas>
         </div>
         <div class="chart-card">
-          <h2 data-i18n="chart.energy_title">Hourly energy (kWh)</h2>
-          <canvas id="costChart" height="90"></canvas>
+          <h2 data-i18n="chart.cpu_title">CPU usage (%)</h2>
+          <canvas id="cpuChart" height="90"></canvas>
         </div>
       </div>
     </section>
@@ -76,17 +76,19 @@
         <canvas id="categoryChart" height="60"></canvas>
       </div>
 
-      <table>
-        <thead>
-          <tr>
-            <th data-i18n="table.container">Container</th>
-            <th data-i18n="table.category">Category</th>
-            <th class="num" data-i18n="table.energy_allocated">Energy allocated</th>
-            <th class="num" data-i18n="table.percent">%</th>
-          </tr>
-        </thead>
-        <tbody id="containerTableBody"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th data-i18n="table.container">Container</th>
+              <th data-i18n="table.category">Category</th>
+              <th class="num" data-i18n="table.energy_allocated">Energy allocated</th>
+              <th class="num" data-i18n="table.percent">%</th>
+            </tr>
+          </thead>
+          <tbody id="containerTableBody"></tbody>
+        </table>
+      </div>
     </section>
 
     <section aria-labelledby="pricing-h">
@@ -97,19 +99,21 @@
       <p class="estimate-note" data-i18n="pricing.note">Pricing note</p>
 
       <div class="card" style="margin-bottom:16px;">
-        <table>
-          <thead>
-            <tr>
-              <th data-i18n="table.from">From</th>
-              <th data-i18n="table.to">To</th>
-              <th data-i18n="table.mode">Mode</th>
-              <th class="num" data-i18n="table.value">Value</th>
-              <th data-i18n="table.note">Note</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="periodsTableBody"></tbody>
-        </table>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th data-i18n="table.from">From</th>
+                <th data-i18n="table.to">To</th>
+                <th data-i18n="table.mode">Mode</th>
+                <th class="num" data-i18n="table.value">Value</th>
+                <th data-i18n="table.note">Note</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="periodsTableBody"></tbody>
+          </table>
+        </div>
       </div>
 
       <div class="card" id="periodFormCard" style="display:none;">

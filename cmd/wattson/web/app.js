@@ -13,7 +13,8 @@ const CATEGORY_COLORS = {
 const categoryLabel = (c) => i18n.t(`category.${c}`) || c;
 
 let currentRange = 'today';
-let powerChart, costChart, categoryChart;
+let powerChart, cpuChart, categoryChart;
+let lastPowerTs = null;
 
 function rangeToUnix(range) {
   const now = Math.floor(Date.now() / 1000);
@@ -46,9 +47,17 @@ async function loadKpis() {
   try {
     const current = await api('/api/v1/power/current');
     const el = document.getElementById('kpiPower');
-    el.textContent = fmtWatts(current.watts);
+    el.innerHTML = `${fmtWatts(current.watts)}<span class="pulse-dot" id="kpiPulse" title="Updates when a new reading arrives"></span>`;
     if (current.stale) {
       el.innerHTML += ` <span class="badge-stale">${i18n.t('badge.stale')}</span>`;
+    }
+    // Only flash on an actual new reading (a new ts), not on every 30s poll
+    // that happens to see the same stale sample again.
+    if (current.ts !== lastPowerTs) {
+      lastPowerTs = current.ts;
+      const dot = document.getElementById('kpiPulse');
+      dot.classList.add('pulse-flash');
+      dot.addEventListener('animationend', () => dot.classList.remove('pulse-flash'), { once: true });
     }
   } catch (e) {
     document.getElementById('kpiPower').textContent = i18n.t('price.na');
@@ -56,7 +65,7 @@ async function loadKpis() {
 
   try {
     const summary = await api('/api/v1/power/summary');
-    renderSummaryTile('kpiCostToday', 'kpiKwhToday', summary.today);
+    renderSummaryTile('kpiCostToday', 'kpiKwhToday', summary.last24h);
     renderSummaryTile('kpiCostMonth', 'kpiKwhMonth', summary.month);
 
     // "Cost this month" is the current calendar month, not a rolling 30-day
@@ -144,7 +153,7 @@ async function loadCharts() {
   }
 
   const powerData = points.map((p) => ({ x: p.bucket_start * 1000, y: p.watts_avg }));
-  const kwhData = points.map((p) => ({ x: p.bucket_start * 1000, y: p.kwh }));
+  const cpuData = points.map((p) => ({ x: p.bucket_start * 1000, y: p.cpu_avg_pct }));
 
   powerChart?.destroy();
   powerChart = new Chart(document.getElementById('powerChart'), {
@@ -165,23 +174,23 @@ async function loadCharts() {
     options: baseLineOptions('W'),
   });
 
-  costChart?.destroy();
-  costChart = new Chart(document.getElementById('costChart'), {
+  cpuChart?.destroy();
+  cpuChart = new Chart(document.getElementById('cpuChart'), {
     type: 'line',
     data: {
       datasets: [{
-        data: kwhData,
-        borderColor: color('--cost-line'),
-        backgroundColor: hexToRgba(color('--cost-line'), 0.1),
+        data: cpuData,
+        borderColor: color('--cpu-line'),
+        backgroundColor: hexToRgba(color('--cpu-line'), 0.1),
         borderWidth: 2,
         pointRadius: 0,
         pointHoverRadius: 5,
-        pointBackgroundColor: color('--cost-line'),
+        pointBackgroundColor: color('--cpu-line'),
         fill: true,
         tension: 0.15,
       }],
     },
-    options: baseLineOptions('kWh'),
+    options: { ...baseLineOptions('%'), scales: { ...baseLineOptions('%').scales, y: { ...baseLineOptions('%').scales.y, min: 0 } } },
   });
 }
 
@@ -241,7 +250,7 @@ async function loadBreakdown() {
   const tbody = document.getElementById('containerTableBody');
   tbody.innerHTML = data.by_container.map((c) => `
     <tr>
-      <td><span class="legend-swatch" style="background:${(CATEGORY_COLORS[c.category] || CATEGORY_COLORS.unknown)()}"></span>${c.container}</td>
+      <td><span class="legend-swatch" style="background:${(CATEGORY_COLORS[c.category] || CATEGORY_COLORS.unknown)()}"></span>${c.container === '__baseline__' ? i18n.t('table.baseline_row') : c.container}</td>
       <td>${categoryLabel(c.category)}</td>
       <td class="num">${fmtKwh(c.kwh_allocated)}</td>
       <td class="num">${((c.kwh_allocated / total) * 100).toFixed(1)}%</td>

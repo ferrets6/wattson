@@ -3,8 +3,6 @@ package api
 import (
 	"database/sql"
 	"net/http"
-
-	"github.com/ferrets6/wattson/internal/attribution"
 )
 
 // KwhAllocated, not Watts: attribution_buckets.watts_allocated is that
@@ -71,15 +69,17 @@ func queryCategoryShares(db *sql.DB, from, to int64) ([]categoryShare, error) {
 	return shares, rows.Err()
 }
 
-// queryContainerShares excludes the baseline row (not a container, it's the
-// power share below the idle threshold) and caps at the top 15 to keep the
-// UI uncluttered: past that the rest goes into an "Other" bucket.
+// queryContainerShares includes the "__baseline__" pseudo-container (the
+// idle power share, not an actual container) as an explicit row — omitting
+// it used to make the category bar's "system" total look wrong next to the
+// container list, since baseline is usually most of it. Caps at the top 15
+// to keep the UI uncluttered: past that the rest goes into an "Other" bucket.
 func queryContainerShares(db *sql.DB, from, to int64) ([]containerShare, error) {
 	rows, err := db.Query(
 		`SELECT container, category, SUM(watts_allocated) / 1000.0 FROM attribution_buckets
-		 WHERE bucket_start >= ? AND bucket_start < ? AND container != ?
+		 WHERE bucket_start >= ? AND bucket_start < ?
 		 GROUP BY container, category ORDER BY SUM(watts_allocated) DESC LIMIT 15`,
-		from, to, attribution.BaselineContainer,
+		from, to,
 	)
 	if err != nil {
 		return nil, err

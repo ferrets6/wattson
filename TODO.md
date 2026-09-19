@@ -68,53 +68,42 @@ binding decisions.
   both hang; a concurrency regression test
   (`store.TestConcurrentWritesDoNotFailWithSQLiteBusy`) now guards the
   original bug report.
+- **Frontend UX pass** (2026-09-19, on `dev`, tested locally against a real
+  read-only DB copy before merge): freshness pulse dot next to "Current
+  power" (flashes only on an actual new `ts` from the poll, not on every
+  30s tick that sees a stale sample again); "Cost today" replaced by a
+  rolling 24h cost (`/power/summary`'s `today` field renamed to `last24h`);
+  "cost this month"/"daily average" tile order swapped; mobile layout: first
+  4 KPI tiles sit 2-by-2 under 600px, badges shrink to fit; "Hourly energy
+  (kWh)" chart replaced with a host CPU usage (%) chart (`power/history` now
+  also returns `cpu_avg_pct` per bucket, left-joined from `resource_hourly`);
+  the category breakdown table now shows `__baseline__` as an explicit
+  "Idle baseline" row instead of excluding it, so the category bar's
+  "system" total matches the sum of the container rows; both the category
+  and pricing-periods tables now scroll horizontally on narrow screens
+  instead of overflowing the page.
 
 ## Open
 
 - 🔴 **Live chart**: currently only hourly rollups are charted, no raw
   (~10s) live view. Needs its own pass, together with the item below.
+  **Design decision (2026-09-19)**: a single chart with power (W) and CPU
+  (%) sharing one y-axis would either need a second axis — the dataviz
+  skill rules out dual-axis charts, since two independently-scaled series
+  on one plot invite false "look, they move together" readings — or
+  normalizing both to a common index (e.g. % of max), which quietly hides
+  the real watt/CPU values behind a derived number nobody asked for.
+  Recommendation: two synced charts (same pattern already shipped for the
+  hourly power/CPU pair above), sharing the time x-axis and a synced hover
+  crosshair between the two canvases, so panning/hovering one scrubs the
+  other. Same idea as Grafana/Beszel's own multi-panel dashboards. Applies
+  to the live raw view once it's built, not just the hourly one.
 - 🔴 **Custom date range + zoom on charts**: not implemented. Flagged as the
   hardest remaining piece, to be tackled as separate follow-up work.
 - Observe Beszel's real raw (`1m`) retention in practice (it already does
-  its own internal rollup at 1m/10m/20m/120m/480m).
-- Calibrate the idle baseline value once there's more real data to look at.
-
-### Frontend UX feedback (2026-09-19, mobile screenshots)
-
-- **"Current power" needs a freshness pulse**: a small dot next to the
-  value that blinks/flashes every time a new reading arrives from the
-  30s poll, even if the number itself is unchanged — so it's visible that
-  it's actually updating, not stuck (distinct from the existing "stale"
-  badge, which only fires after 2 minutes with no data at all).
-- **"Cost today" is a low-value KPI** — a rolling 24h cost might be more
-  useful than "since local midnight" (which is nearly empty right after
-  midnight).
-- Swap the order of the "cost this month" and "daily average" tiles.
-- On mobile, the first 4 KPI tiles should sit two-by-two side by side
-  instead of stacking full-width; shrink the rest of the layout and move
-  the "estimate" badge if needed to fit.
-- **The "Hourly energy (kWh)" chart isn't useful as-is** — consider CPU
-  usage instead (part of the charts rework below).
-- Since the X axis is always time, a smarter single chart combining power
-  draw + CPU usage might read better than two separate ones (part of the
-  charts rework below).
-- **Breakdown by category/service: the bar's per-category totals don't
-  match the sum of the container table rows.** Not a data bug — the
-  container table excludes `__baseline__` (it's not a container), but the
-  category bar's "system" total *includes* the baseline share, which is
-  usually most of it. The UI never shows baseline as a line item, so the
-  mismatch looks like an error. Fix: either show baseline as an explicit
-  row/label in the table, or clarify in the note that the category totals
-  include idle baseline while the container list doesn't.
-- The category breakdown table overflows on the right (mobile).
-- The pricing periods table isn't properly responsive (mobile).
-
-## Homelab integration (separate session, done from the `homelab` repo)
-
-- `services/wattson/docker-compose.yml` (hp-bios-webui pattern: build from a
-  Git URL pinned to a commit SHA of this repo).
-- Caddy block `wattson.example.lan` (`lan-only` + `sso`).
-- Homepage `customapi` card.
-- Uptime Kuma monitor.
-- ZFS dataset + sanoid + backup; entries in `docs/services.md`,
-  `docs/data-map.md`, `docs/decisions.md`.
+  its own internal rollup at 1m/10m/20m/120m/480m) — i.e. confirm how far
+  back `resource_samples` at 1-minute granularity actually stays queryable
+  on the Beszel side before Wattson's own poll would see gaps. Not started;
+  low priority.
+- Calibrate the idle baseline value once there's more real data to look at
+  (explicitly deferred by the user — revisit only when asked).
