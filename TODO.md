@@ -79,6 +79,36 @@ binding decisions.
   its own internal rollup at 1m/10m/20m/120m/480m).
 - Calibrate the idle baseline value once there's more real data to look at.
 
+### Frontend UX feedback (2026-09-19, mobile screenshots)
+
+- **"Current power" needs a freshness pulse**: a small dot next to the
+  value that blinks/flashes every time a new reading arrives from the
+  30s poll, even if the number itself is unchanged — so it's visible that
+  it's actually updating, not stuck (distinct from the existing "stale"
+  badge, which only fires after 2 minutes with no data at all).
+- **"Cost today" is a low-value KPI** — a rolling 24h cost might be more
+  useful than "since local midnight" (which is nearly empty right after
+  midnight).
+- Swap the order of the "cost this month" and "daily average" tiles.
+- On mobile, the first 4 KPI tiles should sit two-by-two side by side
+  instead of stacking full-width; shrink the rest of the layout and move
+  the "estimate" badge if needed to fit.
+- **The "Hourly energy (kWh)" chart isn't useful as-is** — consider CPU
+  usage instead (part of the charts rework below).
+- Since the X axis is always time, a smarter single chart combining power
+  draw + CPU usage might read better than two separate ones (part of the
+  charts rework below).
+- **Breakdown by category/service: the bar's per-category totals don't
+  match the sum of the container table rows.** Not a data bug — the
+  container table excludes `__baseline__` (it's not a container), but the
+  category bar's "system" total *includes* the baseline share, which is
+  usually most of it. The UI never shows baseline as a line item, so the
+  mismatch looks like an error. Fix: either show baseline as an explicit
+  row/label in the table, or clarify in the note that the category totals
+  include idle baseline while the container list doesn't.
+- The category breakdown table overflows on the right (mobile).
+- The pricing periods table isn't properly responsive (mobile).
+
 ## Homelab integration (separate session, done from the `homelab` repo)
 
 - `services/wattson/docker-compose.yml` (hp-bios-webui pattern: build from a
