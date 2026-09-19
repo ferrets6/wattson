@@ -4,7 +4,7 @@
 
   "kpi.aria_label": "Main indicators",
   "kpi.power": "Current power",
-  "kpi.cost_today": "Cost today",
+  "kpi.cost_24h": "Cost (last 24h)",
   "kpi.cost_month": "Cost for {{month}}",
   "kpi.daily_avg": "Daily average (this month)",
   "kpi.current_price": "Current price",
@@ -20,12 +20,14 @@
   "price.source.default": "monthly PUN + default spread",
   "price.provisional_suffix": "{{source}} · provisional estimate, refined at month end",
 
+  "live.title": "Live (last 15 min)",
+
   "range.today": "Today",
   "range.week": "7 days",
   "range.month": "30 days",
 
   "chart.power_title": "Power (W)",
-  "chart.energy_title": "Hourly energy (kWh)",
+  "chart.cpu_title": "CPU usage (%)",
 
   "breakdown.title": "Breakdown by category/service",
   "breakdown.note": "Energy (kWh) allocated in the selected period, estimated as follows: when total consumption exceeds the idle baseline, the surplus is attributed to the container with the highest CPU peak that hour. It's a heuristic correlation estimate, not a direct per-container measurement (the wattmeter only measures the total).",
@@ -35,6 +37,7 @@
   "table.energy_allocated": "Energy allocated",
   "table.percent": "%",
   "table.no_data": "No data yet for this period.",
+  "table.baseline_row": "Idle baseline",
 
   "category.system": "System",
   "category.user": "User",

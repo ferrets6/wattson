@@ -14,6 +14,7 @@ import (
 func RegisterRoutes(mux *http.ServeMux, db *sql.DB, defaultSpread float64) {
 	mux.HandleFunc("GET /api/v1/power/current", powerCurrentHandler(db))
 	mux.HandleFunc("GET /api/v1/power/history", powerHistoryHandler(db))
+	mux.HandleFunc("GET /api/v1/power/live", powerLiveHandler(db))
 	mux.HandleFunc("GET /api/v1/power/summary", powerSummaryHandler(db, defaultSpread))
 	mux.HandleFunc("GET /api/v1/power/attribution", attributionHandler(db))
 

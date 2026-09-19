@@ -43,11 +43,14 @@ type powerHourlyPoint struct {
 	WattsMin    float64 `json:"watts_min"`
 	WattsMax    float64 `json:"watts_max"`
 	Kwh         float64 `json:"kwh"`
+	CpuAvgPct   float64 `json:"cpu_avg_pct"`
 }
 
-// powerHistoryHandler returns the hourly rollup in [from, to). Hourly
-// groupby only for now: day/category/service can be added when the
-// frontend actually needs them.
+// powerHistoryHandler returns the hourly rollup in [from, to), plus the
+// host's CPU usage for the same buckets (0 if no resource data landed that
+// hour) so the frontend can chart it alongside power. Hourly groupby only
+// for now: day/category/service can be added when the frontend actually
+// needs them.
 func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		from, to, ok := parseUnixRange(w, r)
@@ -56,7 +59,11 @@ func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(
-			`SELECT bucket_start, watts_avg, watts_min, watts_max, kwh FROM power_hourly WHERE bucket_start >= ? AND bucket_start < ? ORDER BY bucket_start`,
+			`SELECT ph.bucket_start, ph.watts_avg, ph.watts_min, ph.watts_max, ph.kwh, COALESCE(rh.cpu_avg, 0)
+			 FROM power_hourly ph
+			 LEFT JOIN resource_hourly rh ON rh.bucket_start = ph.bucket_start AND rh.container = '__host__'
+			 WHERE ph.bucket_start >= ? AND ph.bucket_start < ?
+			 ORDER BY ph.bucket_start`,
 			from, to,
 		)
 		if err != nil {
@@ -68,7 +75,7 @@ func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 		points := []powerHourlyPoint{}
 		for rows.Next() {
 			var p powerHourlyPoint
-			if err := rows.Scan(&p.BucketStart, &p.WattsAvg, &p.WattsMin, &p.WattsMax, &p.Kwh); err != nil {
+			if err := rows.Scan(&p.BucketStart, &p.WattsAvg, &p.WattsMin, &p.WattsMax, &p.Kwh, &p.CpuAvgPct); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal error")
 				return
 			}
@@ -76,6 +83,62 @@ func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, points)
 	}
+}
+
+type livePoint struct {
+	Ts    int64   `json:"ts"`
+	Value float64 `json:"value"`
+}
+
+type liveResponse struct {
+	Power []livePoint `json:"power"`
+	Cpu   []livePoint `json:"cpu"`
+}
+
+// liveWindow: how far back /power/live looks. A sliding window, not a
+// paged range — the frontend just polls this on an interval for a "live"
+// view, it doesn't need history depth here (that's /power/history).
+const liveWindow = 15 * time.Minute
+
+// powerLiveHandler returns raw (un-rolled-up) power and host CPU samples
+// from the last liveWindow, for a live/raw chart distinct from the hourly
+// rollup used by /power/history. The two series aren't timestamp-aligned
+// (MQTT and Beszel poll independently) — the frontend charts them on a
+// shared time axis rather than by matching index.
+func powerLiveHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		since := time.Now().Add(-liveWindow).Unix()
+
+		power, err := queryLiveSeries(db, `SELECT ts, watts FROM power_samples WHERE ts >= ? ORDER BY ts`, since)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		cpu, err := queryLiveSeries(db, `SELECT ts, cpu_pct FROM resource_samples WHERE ts >= ? AND container = '__host__' ORDER BY ts`, since)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusOK, liveResponse{Power: power, Cpu: cpu})
+	}
+}
+
+func queryLiveSeries(db *sql.DB, query string, since int64) ([]livePoint, error) {
+	rows, err := db.Query(query, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	points := []livePoint{}
+	for rows.Next() {
+		var p livePoint
+		if err := rows.Scan(&p.Ts, &p.Value); err != nil {
+			return nil, err
+		}
+		points = append(points, p)
+	}
+	return points, rows.Err()
 }
 
 type summaryPeriod struct {
@@ -95,8 +158,10 @@ type priceInfo struct {
 }
 
 type summaryResponse struct {
-	Today summaryPeriod `json:"today"`
-	Month summaryPeriod `json:"month"`
+	// Last24h is a rolling window, not "since local midnight": right after
+	// midnight the latter is nearly empty and not a useful KPI.
+	Last24h summaryPeriod `json:"last24h"`
+	Month   summaryPeriod `json:"month"`
 	// MonthStart is the current calendar month's start (unix seconds), so the
 	// frontend can format "Cost for <month>" in the viewer's own locale
 	// instead of the server guessing a language.
@@ -108,12 +173,11 @@ func powerSummaryHandler(db *sql.DB, defaultSpread float64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		loc := pricing.RomeLocation()
 		now := time.Now().In(loc)
-		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 		monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
 
 		resolve := func(at time.Time) (pricing.Result, error) { return pricing.Resolve(db, at, defaultSpread) }
 
-		today, err := summaryFor(db, todayStart.Unix(), now.Unix(), resolve)
+		last24h, err := summaryFor(db, now.Add(-24*time.Hour).Unix(), now.Unix(), resolve)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
@@ -131,7 +195,7 @@ func powerSummaryHandler(db *sql.DB, defaultSpread float64) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, summaryResponse{
-			Today:      today,
+			Last24h:    last24h,
 			Month:      month,
 			MonthStart: monthStart.Unix(),
 			CurrentPrice: priceInfo{

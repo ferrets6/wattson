@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestAttributionHandlerAggregatesAndExcludesBaseline(t *testing.T) {
+func TestAttributionHandlerAggregatesAndIncludesBaseline(t *testing.T) {
 	db, h := newTestServer(t)
 	bucketStart := time.Now().Add(-time.Hour).Unix()
 
@@ -42,12 +42,19 @@ func TestAttributionHandlerAggregatesAndExcludesBaseline(t *testing.T) {
 		t.Errorf("system total = %v, want 0.035 kWh (30+5 Wh = 0.035 kWh)", systemTotal)
 	}
 
-	if len(resp.ByContainer) != 2 {
-		t.Fatalf("expected 2 containers (baseline excluded), got %d: %+v", len(resp.ByContainer), resp.ByContainer)
+	if len(resp.ByContainer) != 3 {
+		t.Fatalf("expected 3 containers (baseline included as an explicit row), got %d: %+v", len(resp.ByContainer), resp.ByContainer)
 	}
+	var sawBaseline bool
 	for _, c := range resp.ByContainer {
 		if c.Container == "__baseline__" {
-			t.Error("__baseline__ must not appear in by_container")
+			sawBaseline = true
+			if c.KwhAllocated != 0.03 {
+				t.Errorf("__baseline__ kwh = %v, want 0.03 (30 Wh)", c.KwhAllocated)
+			}
 		}
+	}
+	if !sawBaseline {
+		t.Error("__baseline__ must appear in by_container so its share isn't hidden from the row sum")
 	}
 }
