@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 </head>
 <body>
   <header>
@@ -67,6 +69,12 @@
         <button data-range="today" class="active" data-i18n="range.today">Today</button>
         <button data-range="week" data-i18n="range.week">7 days</button>
         <button data-range="month" data-i18n="range.month">30 days</button>
+        <span class="range-custom">
+          <input type="date" id="customFrom" aria-label="From" />
+          <span>&ndash;</span>
+          <input type="date" id="customUntil" aria-label="To" />
+        </span>
+        <button type="button" class="icon-btn" id="resetZoomBtn" data-i18n="chart.reset_zoom">Reset zoom</button>
       </div>
 
       <div class="charts-grid">

@@ -110,10 +110,20 @@ binding decisions.
   hourly). Not addressed yet — revisit spacing/collapsing once it's been
   seen on a real phone (see the "Open" testing note below).
 
+## Done (continued)
+
+- **Custom date range + zoom on the hourly charts** (2026-09-19): two date
+  inputs next to the preset buttons override the range entirely (an empty
+  "until" defaults to now); picking a preset clears them back. Zoom/pan use
+  `chartjs-plugin-zoom` (+ hammer.js for pinch) on the power/CPU chart pair
+  only — the live charts redraw every 10s poll, so a zoom there would just
+  get reset before anyone could use it. Zooming or panning either chart
+  mirrors the x-axis range onto its pair (same `_pairChart` wiring as the
+  hover-sync), plus a "Reset zoom" button. Verified in the browser: wheel
+  zoom, cross-chart sync, reset, and preset/custom switching all work.
+
 ## Open
 
-- 🔴 **Custom date range + zoom on charts**: not implemented. Flagged as the
-  hardest remaining piece, to be tackled as separate follow-up work.
 - Observe Beszel's real raw (`1m`) retention in practice (it already does
   its own internal rollup at 1m/10m/20m/120m/480m) — i.e. confirm how far
   back `resource_samples` at 1-minute granularity actually stays queryable

@@ -13,13 +13,21 @@ const CATEGORY_COLORS = {
 const categoryLabel = (c) => i18n.t(`category.${c}`) || c;
 
 let currentRange = 'today';
+let customFrom = null, customUntil = null; // YYYY-MM-DD, both set together or not at all
 let powerChart, cpuChart, categoryChart;
 let livePowerChart, liveCpuChart;
 let lastPowerTs = null;
 
-function rangeToUnix(range) {
+// A custom date range (from the two date inputs) takes over from the
+// preset buttons entirely; clearing it falls back to the active preset.
+function rangeToUnix() {
+  if (customFrom) {
+    const from = Math.floor(new Date(`${customFrom}T00:00:00`).getTime() / 1000);
+    const to = customUntil ? Math.floor(new Date(`${customUntil}T23:59:59`).getTime() / 1000) : Math.floor(Date.now() / 1000);
+    return { from, to };
+  }
   const now = Math.floor(Date.now() / 1000);
-  const days = { today: 1, week: 7, month: 30 }[range] ?? 1;
+  const days = { today: 1, week: 7, month: 30 }[currentRange] ?? 1;
   return { from: now - days * 86400, to: now };
 }
 
@@ -114,7 +122,22 @@ function renderCurrentPrice(price) {
 
 // --- Power/energy charts -------------------------------------------------
 
-function baseLineOptions(unitLabel, timeUnit = 'hour') {
+// Mirrors a zoomed/panned x-axis range onto the paired chart (set via
+// chart._pairChart after both are created) — otherwise zooming the power
+// chart alone would desync it from the CPU chart it's meant to line up with.
+function syncZoomedRange(chart) {
+  const target = chart._pairChart;
+  if (!target) return;
+  target.options.scales.x.min = chart.scales.x.min;
+  target.options.scales.x.max = chart.scales.x.max;
+  target.update('none');
+}
+
+// zoomable: wheel/pinch-to-zoom + drag-to-pan on the x (time) axis only —
+// only worth enabling on charts whose data isn't replaced every few
+// seconds (the live charts redraw every 10s poll, so any zoom on them
+// would just get reset before anyone could use it).
+function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -127,6 +150,18 @@ function baseLineOptions(unitLabel, timeUnit = 'hour') {
           title: (items) => new Date(items[0].parsed.x).toLocaleString(i18n.intlTag()),
         },
       },
+      ...(zoomable ? {
+        zoom: {
+          limits: { x: { min: 'original', max: 'original' } },
+          pan: { enabled: true, mode: 'x', onPanComplete: ({ chart }) => syncZoomedRange(chart) },
+          zoom: {
+            wheel: { enabled: true },
+            pinch: { enabled: true },
+            mode: 'x',
+            onZoomComplete: ({ chart }) => syncZoomedRange(chart),
+          },
+        },
+      } : {}),
     },
     scales: {
       x: {
@@ -184,7 +219,7 @@ function linkChartsHover(canvasA, getChartA, canvasB, getChartB) {
 }
 
 async function loadCharts() {
-  const { from, to } = rangeToUnix(currentRange);
+  const { from, to } = rangeToUnix();
   let points = [];
   try {
     points = await api(`/api/v1/power/history?from=${from}&to=${to}`);
@@ -211,9 +246,10 @@ async function loadCharts() {
         tension: 0.15,
       }],
     },
-    options: baseLineOptions('W'),
+    options: baseLineOptions('W', 'hour', true),
   });
 
+  const cpuOptions = baseLineOptions('%', 'hour', true);
   cpuChart?.destroy();
   cpuChart = new Chart(document.getElementById('cpuChart'), {
     type: 'line',
@@ -230,8 +266,12 @@ async function loadCharts() {
         tension: 0.15,
       }],
     },
-    options: { ...baseLineOptions('%'), scales: { ...baseLineOptions('%').scales, y: { ...baseLineOptions('%').scales.y, min: 0 } } },
+    options: { ...cpuOptions, scales: { ...cpuOptions.scales, y: { ...cpuOptions.scales.y, min: 0 } } },
   });
+
+  // Zoom/pan on either chart mirrors onto the other (see syncZoomedRange).
+  powerChart._pairChart = cpuChart;
+  cpuChart._pairChart = powerChart;
 }
 
 // --- Live (raw, ~10s) charts ----------------------------------------------
@@ -297,7 +337,7 @@ function hexToRgba(hex, alpha) {
 // --- Category/container breakdown ----------------------------------------
 
 async function loadBreakdown() {
-  const { from, to } = rangeToUnix(currentRange);
+  const { from, to } = rangeToUnix();
   let data = { by_category: [], by_container: [] };
   try {
     data = await api(`/api/v1/power/attribution?from=${from}&to=${to}`);
@@ -356,11 +396,32 @@ async function loadBreakdown() {
 document.getElementById('rangePicker').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-range]');
   if (!btn) return;
-  document.querySelectorAll('#rangePicker button').forEach((b) => b.classList.remove('active'));
+  document.querySelectorAll('#rangePicker button[data-range]').forEach((b) => b.classList.remove('active'));
   btn.classList.add('active');
   currentRange = btn.dataset.range;
+  customFrom = customUntil = null;
+  document.getElementById('customFrom').value = '';
+  document.getElementById('customUntil').value = '';
   loadCharts();
   loadBreakdown();
+});
+
+// A custom "from" date overrides the preset entirely; "until" defaults to
+// now if left empty (an open-ended custom range).
+['customFrom', 'customUntil'].forEach((id) => {
+  document.getElementById(id).addEventListener('change', () => {
+    customFrom = document.getElementById('customFrom').value || null;
+    customUntil = document.getElementById('customUntil').value || null;
+    if (!customFrom) return;
+    document.querySelectorAll('#rangePicker button[data-range]').forEach((b) => b.classList.remove('active'));
+    loadCharts();
+    loadBreakdown();
+  });
+});
+
+document.getElementById('resetZoomBtn').addEventListener('click', () => {
+  powerChart?.resetZoom();
+  cpuChart?.resetZoom();
 });
 
 // --- Pricing periods -------------------------------------------------------
