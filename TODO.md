@@ -119,5 +119,16 @@ binding decisions.
   back `resource_samples` at 1-minute granularity actually stays queryable
   on the Beszel side before Wattson's own poll would see gaps. Not started;
   low priority.
-- Calibrate the idle baseline value once there's more real data to look at
-  (explicitly deferred by the user — revisit only when asked).
+- **Idle baseline calibration (2026-09-19, calculated from real data)**:
+  ran the same 10th-percentile calculation `rollup.baselineWatts` uses
+  against the local dev DB's real backfilled `power_hourly` data. Only 57
+  hours of history exist so far (backfill started 2026-09-16), so the
+  trailing-7-day window isn't full yet: p10 = **37.8 W**, min ever observed
+  = 36.6 W, median = 38.7 W. That's higher than the ~32 W guessed from
+  memory — either the NAS hasn't had a fully idle hour yet in this short
+  window (some load nudging every hourly average up), or the 32 W mental
+  estimate was from different conditions. Left `FixedBaselineWatts` unset
+  (no hardcoded override): baking in a number from 2.4 days of data would
+  defeat the point of the dynamic calculation. Revisit once a full 7-day
+  window has accumulated (around 2026-09-23) and recheck against a fixed
+  32 W idea only if the dynamic value still looks off.
