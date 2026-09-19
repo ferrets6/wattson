@@ -28,6 +28,7 @@
 
   "chart.power_title": "Potenza (W)",
   "chart.cpu_title": "Utilizzo CPU (%)",
+  "chart.reset_zoom": "Reset zoom",
 
   "breakdown.title": "Breakdown per categoria/servizio",
   "breakdown.note": "Energia (kWh) allocata nel periodo selezionato, stimata così: quando il consumo totale supera la soglia di base, il surplus viene attribuito al container con il picco di CPU più alto in quell'ora. È una stima euristica per correlazione, non una misura diretta per container (il wattmetro misura solo il totale).",
