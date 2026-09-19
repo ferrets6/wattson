@@ -85,6 +85,62 @@ func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+type livePoint struct {
+	Ts    int64   `json:"ts"`
+	Value float64 `json:"value"`
+}
+
+type liveResponse struct {
+	Power []livePoint `json:"power"`
+	Cpu   []livePoint `json:"cpu"`
+}
+
+// liveWindow: how far back /power/live looks. A sliding window, not a
+// paged range — the frontend just polls this on an interval for a "live"
+// view, it doesn't need history depth here (that's /power/history).
+const liveWindow = 15 * time.Minute
+
+// powerLiveHandler returns raw (un-rolled-up) power and host CPU samples
+// from the last liveWindow, for a live/raw chart distinct from the hourly
+// rollup used by /power/history. The two series aren't timestamp-aligned
+// (MQTT and Beszel poll independently) — the frontend charts them on a
+// shared time axis rather than by matching index.
+func powerLiveHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		since := time.Now().Add(-liveWindow).Unix()
+
+		power, err := queryLiveSeries(db, `SELECT ts, watts FROM power_samples WHERE ts >= ? ORDER BY ts`, since)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		cpu, err := queryLiveSeries(db, `SELECT ts, cpu_pct FROM resource_samples WHERE ts >= ? AND container = '__host__' ORDER BY ts`, since)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusOK, liveResponse{Power: power, Cpu: cpu})
+	}
+}
+
+func queryLiveSeries(db *sql.DB, query string, since int64) ([]livePoint, error) {
+	rows, err := db.Query(query, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	points := []livePoint{}
+	for rows.Next() {
+		var p livePoint
+		if err := rows.Scan(&p.Ts, &p.Value); err != nil {
+			return nil, err
+		}
+		points = append(points, p)
+	}
+	return points, rows.Err()
+}
+
 type summaryPeriod struct {
 	KWh      float64 `json:"kwh"`
 	CostEur  float64 `json:"cost_eur"`

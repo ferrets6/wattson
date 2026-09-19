@@ -80,6 +80,36 @@ func TestPowerHistoryReturnsPointsInRange(t *testing.T) {
 	}
 }
 
+func TestPowerLiveReturnsRecentRawSamplesOnly(t *testing.T) {
+	db, h := newTestServer(t)
+	now := time.Now().Unix()
+	db.Exec(`INSERT INTO power_samples (ts, watts, cumulative_kwh, voltage, current) VALUES (?, ?, ?, ?, ?)`,
+		now-60, 40.0, 1.0, 230.0, 0.17) // inside the 15-minute window
+	db.Exec(`INSERT INTO power_samples (ts, watts, cumulative_kwh, voltage, current) VALUES (?, ?, ?, ?, ?)`,
+		now-3600, 99.0, 2.0, 230.0, 0.43) // an hour old, outside the window
+	db.Exec(`INSERT INTO resource_samples (ts, container, cpu_pct, mem_used, net_sent_bytes, net_recv_bytes) VALUES (?, '__host__', ?, ?, ?, ?)`,
+		now-60, 12.5, 1.0, 0, 0)
+	db.Exec(`INSERT INTO resource_samples (ts, container, cpu_pct, mem_used, net_sent_bytes, net_recv_bytes) VALUES (?, 'jellyfin', ?, ?, ?, ?)`,
+		now-60, 80.0, 1.0, 0, 0) // a container, not the host: must not leak into the cpu series
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/power/live", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp liveResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Power) != 1 || resp.Power[0].Value != 40.0 {
+		t.Errorf("power = %+v, want exactly the recent 40W sample", resp.Power)
+	}
+	if len(resp.Cpu) != 1 || resp.Cpu[0].Value != 12.5 {
+		t.Errorf("cpu = %+v, want exactly the recent __host__ sample", resp.Cpu)
+	}
+}
+
 func TestPricingPeriodsCrudAndOverlapRejection(t *testing.T) {
 	_, h := newTestServer(t)
 

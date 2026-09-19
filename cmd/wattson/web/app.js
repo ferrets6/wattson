@@ -14,6 +14,7 @@ const categoryLabel = (c) => i18n.t(`category.${c}`) || c;
 
 let currentRange = 'today';
 let powerChart, cpuChart, categoryChart;
+let livePowerChart, liveCpuChart;
 let lastPowerTs = null;
 
 function rangeToUnix(range) {
@@ -113,7 +114,7 @@ function renderCurrentPrice(price) {
 
 // --- Power/energy charts -------------------------------------------------
 
-function baseLineOptions(unitLabel) {
+function baseLineOptions(unitLabel, timeUnit = 'hour') {
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -130,7 +131,7 @@ function baseLineOptions(unitLabel) {
     scales: {
       x: {
         type: 'time',
-        time: { unit: 'hour' },
+        time: { unit: timeUnit },
         grid: { color: color('--gridline'), drawTicks: false },
         ticks: { color: color('--text-muted'), maxRotation: 0 },
       },
@@ -141,6 +142,45 @@ function baseLineOptions(unitLabel) {
       },
     },
   };
+}
+
+// --- Synced hover crosshair between a power/CPU chart pair ----------------
+//
+// Chart.js has no built-in way to sync tooltips across two chart instances.
+// Listeners are attached once, on the canvas elements, and read the current
+// chart instance through a getter — charts get destroyed/recreated often
+// (range switch, live poll), a canvas-bound listener would otherwise pile
+// up duplicates or point at a stale, destroyed chart.
+function linkChartsHover(canvasA, getChartA, canvasB, getChartB) {
+  function nearestIndex(chart, xVal) {
+    const data = chart.data.datasets[0]?.data || [];
+    let idx = -1, min = Infinity;
+    for (let i = 0; i < data.length; i++) {
+      const d = Math.abs(data[i].x - xVal);
+      if (d < min) { min = d; idx = i; }
+    }
+    return idx;
+  }
+  function setActive(chart, idx) {
+    if (!chart) return;
+    const active = idx < 0 ? [] : [{ datasetIndex: 0, index: idx }];
+    chart.tooltip.setActiveElements(active, { x: 0, y: 0 });
+    chart.setActiveElements(active);
+    chart.update('none');
+  }
+  function onMove(sourceCanvas, sourceGetter, targetGetter, evt) {
+    const source = sourceGetter();
+    const target = targetGetter();
+    if (!source || !target) return;
+    const rect = sourceCanvas.getBoundingClientRect();
+    const xVal = source.scales.x.getValueForPixel(evt.clientX - rect.left);
+    if (xVal == null) return;
+    setActive(target, nearestIndex(target, xVal));
+  }
+  canvasA.addEventListener('mousemove', (e) => onMove(canvasA, getChartA, getChartB, e));
+  canvasB.addEventListener('mousemove', (e) => onMove(canvasB, getChartB, getChartA, e));
+  canvasA.addEventListener('mouseleave', () => setActive(getChartB(), -1));
+  canvasB.addEventListener('mouseleave', () => setActive(getChartA(), -1));
 }
 
 async function loadCharts() {
@@ -191,6 +231,59 @@ async function loadCharts() {
       }],
     },
     options: { ...baseLineOptions('%'), scales: { ...baseLineOptions('%').scales, y: { ...baseLineOptions('%').scales.y, min: 0 } } },
+  });
+}
+
+// --- Live (raw, ~10s) charts ----------------------------------------------
+
+async function loadLive() {
+  let data = { power: [], cpu: [] };
+  try {
+    data = await api('/api/v1/power/live');
+  } catch (e) {
+    return; // keep whatever was last rendered rather than clearing it
+  }
+
+  const powerData = (data.power || []).map((p) => ({ x: p.ts * 1000, y: p.value }));
+  const cpuData = (data.cpu || []).map((p) => ({ x: p.ts * 1000, y: p.value }));
+
+  livePowerChart?.destroy();
+  livePowerChart = new Chart(document.getElementById('livePowerChart'), {
+    type: 'line',
+    data: {
+      datasets: [{
+        data: powerData,
+        borderColor: color('--power-line'),
+        backgroundColor: hexToRgba(color('--power-line'), 0.1),
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointBackgroundColor: color('--power-line'),
+        fill: true,
+        tension: 0.15,
+      }],
+    },
+    options: baseLineOptions('W', 'minute'),
+  });
+
+  const cpuOptions = baseLineOptions('%', 'minute');
+  liveCpuChart?.destroy();
+  liveCpuChart = new Chart(document.getElementById('liveCpuChart'), {
+    type: 'line',
+    data: {
+      datasets: [{
+        data: cpuData,
+        borderColor: color('--cpu-line'),
+        backgroundColor: hexToRgba(color('--cpu-line'), 0.1),
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointBackgroundColor: color('--cpu-line'),
+        fill: true,
+        tension: 0.15,
+      }],
+    },
+    options: { ...cpuOptions, scales: { ...cpuOptions.scales, y: { ...cpuOptions.scales.y, min: 0 } } },
   });
 }
 
@@ -424,6 +517,7 @@ async function runPreview() {
 
 function loadAll() {
   loadKpis();
+  loadLive();
   loadCharts();
   loadBreakdown();
   loadPeriods();
@@ -439,7 +533,12 @@ document.getElementById('localeSwitcher').addEventListener('change', async (e) =
 async function main() {
   await i18n.init();
   document.getElementById('localeSwitcher').value = i18n.locale;
+
+  linkChartsHover(document.getElementById('powerChart'), () => powerChart, document.getElementById('cpuChart'), () => cpuChart);
+  linkChartsHover(document.getElementById('livePowerChart'), () => livePowerChart, document.getElementById('liveCpuChart'), () => liveCpuChart);
+
   loadAll();
-  setInterval(loadKpis, 30000); // only "current power" needs to feel live
+  setInterval(loadKpis, 30000); // "current power" KPI + freshness pulse
+  setInterval(loadLive, 10000); // matches the wattmeter's ~10s publish interval
 }
 main();

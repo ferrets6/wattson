@@ -82,22 +82,36 @@ binding decisions.
   "system" total matches the sum of the container rows; both the category
   and pricing-periods tables now scroll horizontally on narrow screens
   instead of overflowing the page.
+- **Live raw chart** (2026-09-19): a new "Live (last 15 min)" section with
+  two synced charts (power W, host CPU %) above the hourly ones. New
+  `GET /api/v1/power/live` returns raw `power_samples`/`resource_samples`
+  (the two series aren't timestamp-aligned — MQTT and Beszel poll
+  independently — so each is charted on its own shared time axis rather
+  than by matching index), polled every 10s to match the wattmeter's
+  publish interval. **Design decision**: a single chart with power and CPU
+  sharing one y-axis would either need a second axis — the dataviz skill
+  rules out dual-axis charts, since two independently-scaled series on one
+  plot invite false "look, they move together" readings — or normalizing
+  both to a common index (% of max), which hides the real values behind a
+  derived number nobody asked for. Went with two synced charts instead:
+  `linkChartsHover()` in `app.js` attaches hover listeners once on the
+  canvases (not on the Chart.js instances, which get destroyed/recreated
+  on every range switch and live poll) and mirrors the active tooltip
+  point onto the other chart by nearest timestamp. Applied to both the
+  live pair and the existing hourly power/CPU pair. Verified locally: the
+  power side gets real live data (MQTT reaches the broker directly from a
+  dev machine); the CPU side's code path is the same one already proven by
+  the hourly CPU chart, but couldn't be exercised with fresh raw samples
+  in local dev specifically, because `BESZEL_URL=http://beszel:8090` is a
+  Docker-internal hostname that only resolves inside the `homelab`
+  network — not a bug, just untestable outside the container.
+- **Mobile note**: with the live section added, a phone screen now shows 4
+  time-series charts before the breakdown/pricing sections (2 live + 2
+  hourly). Not addressed yet — revisit spacing/collapsing once it's been
+  seen on a real phone (see the "Open" testing note below).
 
 ## Open
 
-- 🔴 **Live chart**: currently only hourly rollups are charted, no raw
-  (~10s) live view. Needs its own pass, together with the item below.
-  **Design decision (2026-09-19)**: a single chart with power (W) and CPU
-  (%) sharing one y-axis would either need a second axis — the dataviz
-  skill rules out dual-axis charts, since two independently-scaled series
-  on one plot invite false "look, they move together" readings — or
-  normalizing both to a common index (e.g. % of max), which quietly hides
-  the real watt/CPU values behind a derived number nobody asked for.
-  Recommendation: two synced charts (same pattern already shipped for the
-  hourly power/CPU pair above), sharing the time x-axis and a synced hover
-  crosshair between the two canvases, so panning/hovering one scrubs the
-  other. Same idea as Grafana/Beszel's own multi-panel dashboards. Applies
-  to the live raw view once it's built, not just the hourly one.
 - 🔴 **Custom date range + zoom on charts**: not implemented. Flagged as the
   hardest remaining piece, to be tackled as separate follow-up work.
 - Observe Beszel's real raw (`1m`) retention in practice (it already does

@@ -20,6 +20,8 @@
   "price.source.default": "monthly PUN + default spread",
   "price.provisional_suffix": "{{source}} · provisional estimate, refined at month end",
 
+  "live.title": "Live (last 15 min)",
+
   "range.today": "Today",
   "range.week": "7 days",
   "range.month": "30 days",

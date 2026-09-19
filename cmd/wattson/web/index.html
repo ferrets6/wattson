@@ -49,6 +49,20 @@
     </section>
 
     <section>
+      <h2 data-i18n="live.title">Live (last 15 min)</h2>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h2 data-i18n="chart.power_title">Power (W)</h2>
+          <canvas id="livePowerChart" height="90"></canvas>
+        </div>
+        <div class="chart-card">
+          <h2 data-i18n="chart.cpu_title">CPU usage (%)</h2>
+          <canvas id="liveCpuChart" height="90"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <div class="range-picker" id="rangePicker">
         <button data-range="today" class="active" data-i18n="range.today">Today</button>
         <button data-range="week" data-i18n="range.week">7 days</button>
