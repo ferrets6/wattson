@@ -1,16 +1,9 @@
-// Package hostcpu samples instantaneous host-wide CPU utilization from
-// /proc/stat, independent of Beszel's own ~1-minute polling. It exists
-// only to feed the live (last 15 min) chart at the same ~2s cadence as the
-// wattmeter, so the power and CPU lines actually move together there --
-// the historical hourly/minutely CPU rollups still come exclusively from
-// Beszel (needed for its per-container breakdown, which /proc can't give).
+// Package hostcpu samples host CPU utilization from /proc/stat every ~2s,
+// feeding only the live chart (Beszel's ~1-minute poll is too coarse for
+// it). Historical charts and attribution still use Beszel.
 //
-// Docker containers see the host's own /proc/stat by default (CPU counters
-// aren't namespaced per-container the way cgroup limits are), unless a
-// proc-virtualizing runtime like LXCFS is in play. If this ever reports
-// the container's own view instead of the host's, that's the first thing
-// to check -- HOSTCPU_PROC_STAT_PATH exists as an escape hatch to point at
-// a bind-mounted /host/proc/stat instead, without a code change.
+// Docker exposes the host's own /proc/stat by default; if that's ever not
+// true here, HOSTCPU_PROC_STAT_PATH points at a bind-mounted alternative.
 package hostcpu
 
 import (
@@ -25,9 +18,8 @@ import (
 	"time"
 )
 
-// Reader turns successive /proc/stat reads into a CPU utilization
-// percentage. Stateful: the first Read after construction (or after any
-// read error) has nothing to diff against.
+// Reader turns successive /proc/stat reads into a CPU utilization percent;
+// the first Read (or one after an error) has nothing to diff against.
 type Reader struct {
 	path    string
 	prev    *sample
@@ -45,11 +37,9 @@ func NewReader(path string) *Reader {
 	return &Reader{path: path}
 }
 
-// Read returns the CPU utilization percent (0-100) since the previous
-// call. ok is false when there's no previous sample to diff against yet,
-// or on a read/parse error (logged once per failure streak, not every
-// call — a wedged /proc path shouldn't spam the log forever on a fast
-// ticker).
+// Read returns CPU utilization percent (0-100) since the previous call, or
+// ok=false with nothing to diff against yet or on a read/parse error
+// (logged once per failure streak, not every call).
 func (r *Reader) Read() (pct float64, ok bool) {
 	s, err := readStat(r.path)
 	if err != nil {
@@ -111,9 +101,8 @@ func readStat(path string) (*sample, error) {
 	return &sample{idle: idle, total: total}, nil
 }
 
-// Start samples every interval (default 2s) until ctx is canceled,
-// inserting into host_cpu_samples. Errors are logged, not fatal: a missing
-// or unreadable /proc/stat just means no live CPU line, not a crash.
+// Start samples every interval (default 2s) until ctx is canceled, writing
+// to host_cpu_samples. Errors are logged, not fatal.
 func Start(ctx context.Context, db *sql.DB, interval time.Duration) {
 	if interval == 0 {
 		interval = 2 * time.Second

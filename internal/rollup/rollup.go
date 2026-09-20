@@ -139,10 +139,8 @@ func rollupBucket(db *sql.DB, cfg Config, bucketStart int64) error {
 		return nil // no samples in this window (e.g. broker down): no row, a gap visible through the API
 	}
 
-	// Minute-level rollup rides along with the hourly one (same cadence,
-	// same raw data already within its 7-day retention) instead of its own
-	// ticker -- the "last week" chart view is fine with data appearing up
-	// to an hour late, and this avoids a second scheduling path.
+	// Minute-level rollup rides along with the hourly one instead of its
+	// own ticker: same cadence, same already-fetched raw data.
 	if err := rollupPowerMinutes(db, bucketStart, bucketEnd); err != nil {
 		return err
 	}
@@ -391,9 +389,7 @@ func pruneRaw(db *sql.DB, retention time.Duration) error {
 	if _, err := db.Exec(`DELETE FROM resource_samples WHERE ts < ?`, cutoff); err != nil {
 		return err
 	}
-	// host_cpu_samples is written by internal/hostcpu, not this package, but
-	// shares the same short-retention raw-table convention, so it's pruned
-	// from the same pass rather than needing its own job.
+	// Written by internal/hostcpu, but shares this table's retention convention.
 	if _, err := db.Exec(`DELETE FROM host_cpu_samples WHERE ts < ?`, cutoff); err != nil {
 		return err
 	}

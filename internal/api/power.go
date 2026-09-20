@@ -48,11 +48,10 @@ type powerHourlyPoint struct {
 	CpuMaxPct   float64 `json:"cpu_max_pct"`
 }
 
-// minutelyRangeThreshold: requests spanning at most this long are served
-// from the minute-level rollup instead of the hourly one -- the hourly
-// rollup is too coarse for "last week" chart requests. Kept a bit under
-// rollup.Config's default MinutelyRetention (8 days) so a request near the
-// edge doesn't land on data that's about to be pruned.
+// minutelyRangeThreshold: requests spanning at most this long use the
+// minute-level rollup instead of the hourly one. Kept under
+// rollup.Config's MinutelyRetention (8 days) so a request near the edge
+// doesn't land on data about to be pruned.
 const minutelyRangeThreshold = 7 * 24 * time.Hour
 
 const historyHourlyQuery = `
@@ -63,9 +62,8 @@ const historyHourlyQuery = `
 	WHERE ph.bucket_start >= ? AND ph.bucket_start < ?
 	ORDER BY ph.bucket_start`
 
-// power_minutely has no kwh column (nothing queries energy at minute
-// resolution) -- the literal 0 keeps powerHourlyPoint's shape identical
-// regardless of which table served the request.
+// power_minutely has no kwh column; the literal 0 keeps powerHourlyPoint's
+// shape identical either way.
 const historyMinutelyQuery = `
 	SELECT pm.bucket_start, pm.watts_avg, pm.watts_min, pm.watts_max, 0,
 	       COALESCE(rm.cpu_avg, 0), COALESCE(rm.cpu_min, rm.cpu_avg, 0), COALESCE(rm.cpu_max, rm.cpu_avg, 0)
@@ -75,9 +73,8 @@ const historyMinutelyQuery = `
 	ORDER BY pm.bucket_start`
 
 // powerHistoryHandler returns the rollup in [from, to) -- minute-level for
-// requests spanning up to a week, hourly beyond that -- plus the host's
-// CPU usage for the same buckets (0 if no resource data landed that
-// bucket) so the frontend can chart it alongside power.
+// requests spanning up to a week, hourly beyond that -- plus host CPU for
+// the same buckets.
 func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		from, to, ok := parseUnixRange(w, r)
@@ -125,18 +122,11 @@ type liveResponse struct {
 // view, it doesn't need history depth here (that's /power/history).
 const liveWindow = 15 * time.Minute
 
-// powerLiveHandler returns raw (un-rolled-up) power and host CPU samples
-// from the last liveWindow, for a live/raw chart distinct from the hourly
-// rollup used by /power/history. The two series aren't timestamp-aligned
-// (they're sampled independently) — the frontend charts them on a shared
-// time axis rather than by matching index.
-//
-// CPU here comes from host_cpu_samples (internal/hostcpu, ~2s from
-// /proc/stat), not Beszel's resource_samples: Beszel only updates once a
-// minute, which read as a flat, stepped line next to power jittering every
-// ~2s. The historical hourly/minutely CPU charts still use Beszel
-// (/power/history, unchanged) — only this live view needed the faster
-// source.
+// powerLiveHandler returns raw power and host CPU samples from the last
+// liveWindow. CPU comes from host_cpu_samples (internal/hostcpu, ~2s from
+// /proc/stat) rather than Beszel, which only updates once a minute — too
+// coarse for this view. The two series aren't timestamp-aligned, so the
+// frontend charts them on a shared time axis rather than by index.
 func powerLiveHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		since := time.Now().Add(-liveWindow).Unix()
