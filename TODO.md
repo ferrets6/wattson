@@ -225,6 +225,38 @@ binding decisions.
       correctly at that rate too — it already flashes on every genuinely
       new `ts`, not on a fixed timer, so this just needs re-verifying,
       not re-implementing.
+    - **Decision (2026-09-20)**: power at 2s (Tasmota `TelePeriod`, user's
+      own task, see above), CPU stays at Beszel's natural ~1-minute pace
+      — no direct host-CPU reading added (would need a `/proc` mount into
+      Wattson's container, a deploy-level change, just to make the live
+      chart's CPU line look busier; not worth it unless the 1-minute
+      stepped CPU line actually bothers when seen next to a jittery 2s
+      power line). Revisit only if that turns out to look bad in practice.
+    - **What actually needs to change once Tasmota publishes at 2s**:
+      confirmed the raw ingestion path is already interval-agnostic —
+      `mqtt.Collector.handleMessage` inserts every message it receives, no
+      debounce, no hardcoded interval assumption anywhere in
+      `internal/mqtt`/`internal/rollup` (`AVG`/`MIN`/`MAX`/`COUNT` queries
+      over a time window work the same regardless of how many raw rows
+      fall inside it). So backend: **no code changes needed**. What *does*
+      need changing, both in `cmd/wattson/web/app.js`:
+      - `loadLive()`'s poll interval (`setInterval(loadLive, 10000)`,
+        currently comment-tied to "the wattmeter's ~10s publish
+        interval") should drop to ~2s to actually show the finer data as
+        it arrives, not just store it — right now the raw table would
+        have a new point every 2s but the chart would still only redraw
+        every 10s.
+      - Consider also lowering `loadKpis()`'s 30s poll
+        (`setInterval(loadKpis, 30000)`) if the "Current power" tile
+        should feel as live as the chart; not strictly required, a
+        separate call either way.
+      - Storage impact re-confirmed negligible: raw retention is only 7
+        days regardless of sampling rate (pruned after the hourly
+        rollup), so 2s vs today's ~10s is roughly a 5x increase in a
+        *short-lived* table (still a trivial row count for SQLite), and
+        zero impact on `power_hourly`, which stays 1 row/hour forever
+        either way — the actual 10-year-retention table is untouched by
+        this change.
   - **1.2 A full week at 1-minute resolution**: today `power_hourly`/
     `resource_hourly` are the only long-term rollup (1 row/hour), which is
     too coarse for a "last 7 days" view. Would need a second rollup tier
