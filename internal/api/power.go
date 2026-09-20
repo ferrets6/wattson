@@ -128,8 +128,15 @@ const liveWindow = 15 * time.Minute
 // powerLiveHandler returns raw (un-rolled-up) power and host CPU samples
 // from the last liveWindow, for a live/raw chart distinct from the hourly
 // rollup used by /power/history. The two series aren't timestamp-aligned
-// (MQTT and Beszel poll independently) — the frontend charts them on a
-// shared time axis rather than by matching index.
+// (they're sampled independently) — the frontend charts them on a shared
+// time axis rather than by matching index.
+//
+// CPU here comes from host_cpu_samples (internal/hostcpu, ~2s from
+// /proc/stat), not Beszel's resource_samples: Beszel only updates once a
+// minute, which read as a flat, stepped line next to power jittering every
+// ~2s. The historical hourly/minutely CPU charts still use Beszel
+// (/power/history, unchanged) — only this live view needed the faster
+// source.
 func powerLiveHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		since := time.Now().Add(-liveWindow).Unix()
@@ -139,7 +146,7 @@ func powerLiveHandler(db *sql.DB) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		cpu, err := queryLiveSeries(db, `SELECT ts, cpu_pct FROM resource_samples WHERE ts >= ? AND container = '__host__' ORDER BY ts`, since)
+		cpu, err := queryLiveSeries(db, `SELECT ts, cpu_pct FROM host_cpu_samples WHERE ts >= ? ORDER BY ts`, since)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
