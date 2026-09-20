@@ -164,7 +164,7 @@ function syncZoomedRange(chart) {
 
 // zoomable: wheel/pinch-to-zoom + drag-to-pan on the x (time) axis only —
 // only worth enabling on charts whose data isn't replaced every few
-// seconds (the live charts redraw every 10s poll, so any zoom on them
+// seconds (the live charts redraw every 2s poll, so any zoom on them
 // would just get reset before anyone could use it).
 function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
   return {
@@ -291,11 +291,11 @@ async function loadCharts() {
   cpuChart._pairChart = powerChart;
 }
 
-// --- Live (raw, ~10s) charts ----------------------------------------------
+// --- Live (raw, ~2s) charts ----------------------------------------------
 
 // Builds a chart on first call; on every later call for the same `existing`
 // instance, updates its data in place instead of destroy()/new Chart(). The
-// live charts poll every 10s — recreating them each time briefly cleared
+// live charts poll every 2s — recreating them each time briefly cleared
 // the canvas before redrawing, which read as a "blink" rather than a
 // smoothly scrolling live chart.
 function upsertLineChart(existing, canvasId, data, lineColor, options) {
@@ -620,6 +620,6 @@ async function main() {
 
   loadAll();
   setInterval(loadKpis, 30000); // "current power" KPI + freshness pulse
-  setInterval(loadLive, 10000); // matches the wattmeter's ~10s publish interval
+  setInterval(loadLive, 2000); // matches the wattmeter's ~2s publish interval
 }
 main();

@@ -48,11 +48,36 @@ type powerHourlyPoint struct {
 	CpuMaxPct   float64 `json:"cpu_max_pct"`
 }
 
-// powerHistoryHandler returns the hourly rollup in [from, to), plus the
-// host's CPU usage for the same buckets (0 if no resource data landed that
-// hour) so the frontend can chart it alongside power. Hourly groupby only
-// for now: day/category/service can be added when the frontend actually
-// needs them.
+// minutelyRangeThreshold: requests spanning at most this long are served
+// from the minute-level rollup instead of the hourly one -- the hourly
+// rollup is too coarse for "last week" chart requests. Kept a bit under
+// rollup.Config's default MinutelyRetention (8 days) so a request near the
+// edge doesn't land on data that's about to be pruned.
+const minutelyRangeThreshold = 7 * 24 * time.Hour
+
+const historyHourlyQuery = `
+	SELECT ph.bucket_start, ph.watts_avg, ph.watts_min, ph.watts_max, ph.kwh,
+	       COALESCE(rh.cpu_avg, 0), COALESCE(rh.cpu_min, rh.cpu_avg, 0), COALESCE(rh.cpu_max, rh.cpu_avg, 0)
+	FROM power_hourly ph
+	LEFT JOIN resource_hourly rh ON rh.bucket_start = ph.bucket_start AND rh.container = '__host__'
+	WHERE ph.bucket_start >= ? AND ph.bucket_start < ?
+	ORDER BY ph.bucket_start`
+
+// power_minutely has no kwh column (nothing queries energy at minute
+// resolution) -- the literal 0 keeps powerHourlyPoint's shape identical
+// regardless of which table served the request.
+const historyMinutelyQuery = `
+	SELECT pm.bucket_start, pm.watts_avg, pm.watts_min, pm.watts_max, 0,
+	       COALESCE(rm.cpu_avg, 0), COALESCE(rm.cpu_min, rm.cpu_avg, 0), COALESCE(rm.cpu_max, rm.cpu_avg, 0)
+	FROM power_minutely pm
+	LEFT JOIN resource_minutely rm ON rm.bucket_start = pm.bucket_start AND rm.container = '__host__'
+	WHERE pm.bucket_start >= ? AND pm.bucket_start < ?
+	ORDER BY pm.bucket_start`
+
+// powerHistoryHandler returns the rollup in [from, to) -- minute-level for
+// requests spanning up to a week, hourly beyond that -- plus the host's
+// CPU usage for the same buckets (0 if no resource data landed that
+// bucket) so the frontend can chart it alongside power.
 func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		from, to, ok := parseUnixRange(w, r)
@@ -60,15 +85,12 @@ func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		rows, err := db.Query(
-			`SELECT ph.bucket_start, ph.watts_avg, ph.watts_min, ph.watts_max, ph.kwh,
-			        COALESCE(rh.cpu_avg, 0), COALESCE(rh.cpu_min, rh.cpu_avg, 0), COALESCE(rh.cpu_max, rh.cpu_avg, 0)
-			 FROM power_hourly ph
-			 LEFT JOIN resource_hourly rh ON rh.bucket_start = ph.bucket_start AND rh.container = '__host__'
-			 WHERE ph.bucket_start >= ? AND ph.bucket_start < ?
-			 ORDER BY ph.bucket_start`,
-			from, to,
-		)
+		query := historyHourlyQuery
+		if time.Duration(to-from)*time.Second <= minutelyRangeThreshold {
+			query = historyMinutelyQuery
+		}
+
+		rows, err := db.Query(query, from, to)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return

@@ -14,8 +14,8 @@ func TestOpenAppliesMigrationsAndIsIdempotent(t *testing.T) {
 		t.Fatalf("first open: %v", err)
 	}
 	tables := []string{
-		"power_samples", "power_hourly",
-		"resource_samples", "resource_hourly",
+		"power_samples", "power_hourly", "power_minutely",
+		"resource_samples", "resource_hourly", "resource_minutely",
 		"attribution_buckets", "pricing_periods", "pun_prices",
 	}
 	for _, tbl := range tables {

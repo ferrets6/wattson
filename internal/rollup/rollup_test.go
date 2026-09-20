@@ -64,6 +64,32 @@ func TestRollupBucketAggregatesPowerAndResources(t *testing.T) {
 		t.Errorf("host cpu avg/min/max = %v/%v/%v, want 5.0/3.0/7.0", hostCpuAvg, hostCpuMin, hostCpuMax)
 	}
 
+	// Minute-level rollup rides along with the hourly one: the sample at
+	// bucketStart+60 (watts=100) and the one at bucketStart+600 (watts=200)
+	// land in different one-minute buckets and must not be averaged together.
+	var minuteWatts float64
+	if err := db.QueryRow(`SELECT watts_avg FROM power_minutely WHERE bucket_start = ?`, bucketStart+60).Scan(&minuteWatts); err != nil {
+		t.Fatalf("power_minutely: %v", err)
+	}
+	if minuteWatts != 100 {
+		t.Errorf("power_minutely[%d].watts_avg = %v, want 100", bucketStart+60, minuteWatts)
+	}
+	var minuteWatts2 float64
+	if err := db.QueryRow(`SELECT watts_avg FROM power_minutely WHERE bucket_start = ?`, bucketStart+600).Scan(&minuteWatts2); err != nil {
+		t.Fatalf("power_minutely: %v", err)
+	}
+	if minuteWatts2 != 200 {
+		t.Errorf("power_minutely[%d].watts_avg = %v, want 200", bucketStart+600, minuteWatts2)
+	}
+
+	var minuteCpu float64
+	if err := db.QueryRow(`SELECT cpu_avg FROM resource_minutely WHERE bucket_start = ? AND container = '__host__'`, bucketStart+600).Scan(&minuteCpu); err != nil {
+		t.Fatalf("resource_minutely: %v", err)
+	}
+	if minuteCpu != 7.0 {
+		t.Errorf("resource_minutely[%d].cpu_avg = %v, want 7.0", bucketStart+600, minuteCpu)
+	}
+
 	rows, err := db.Query(`SELECT container, category, watts_allocated FROM attribution_buckets WHERE bucket_start = ?`, bucketStart)
 	if err != nil {
 		t.Fatalf("attribution_buckets query: %v", err)
@@ -157,6 +183,29 @@ func TestBaselineWattsDynamicPercentile(t *testing.T) {
 	}
 	if b != 20 {
 		t.Errorf("baseline (10th percentile) = %v, want 20 (2nd lowest of 10 values)", b)
+	}
+}
+
+func TestPruneMinutelyDeletesOnlyPastRetention(t *testing.T) {
+	db := newTestDB(t)
+	now := time.Now().Unix()
+	old := now - int64((9 * 24 * time.Hour).Seconds()) // past an 8-day retention
+	recent := now - int64((1 * time.Hour).Seconds())   // well within it
+
+	db.Exec(`INSERT INTO power_minutely (bucket_start, watts_avg, watts_min, watts_max, sample_count) VALUES (?, 1, 1, 1, 1)`, old)
+	db.Exec(`INSERT INTO power_minutely (bucket_start, watts_avg, watts_min, watts_max, sample_count) VALUES (?, 1, 1, 1, 1)`, recent)
+	db.Exec(`INSERT INTO resource_minutely (bucket_start, container, cpu_avg, cpu_min, cpu_max) VALUES (?, '__host__', 1, 1, 1)`, old)
+	db.Exec(`INSERT INTO resource_minutely (bucket_start, container, cpu_avg, cpu_min, cpu_max) VALUES (?, '__host__', 1, 1, 1)`, recent)
+
+	if err := pruneMinutely(db, 8*24*time.Hour); err != nil {
+		t.Fatalf("pruneMinutely: %v", err)
+	}
+
+	var powerCount, resourceCount int
+	db.QueryRow(`SELECT COUNT(*) FROM power_minutely`).Scan(&powerCount)
+	db.QueryRow(`SELECT COUNT(*) FROM resource_minutely`).Scan(&resourceCount)
+	if powerCount != 1 || resourceCount != 1 {
+		t.Errorf("power_minutely/resource_minutely rows after prune = %d/%d, want 1/1 (only the recent row)", powerCount, resourceCount)
 	}
 }
 
