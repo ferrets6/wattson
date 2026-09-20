@@ -69,11 +69,9 @@ func queryCategoryShares(db *sql.DB, from, to int64) ([]categoryShare, error) {
 	return shares, rows.Err()
 }
 
-// queryContainerShares includes the "__baseline__" pseudo-container (the
-// idle power share, not an actual container) as an explicit row — omitting
-// it used to make the category bar's "system" total look wrong next to the
-// container list, since baseline is usually most of it. Caps at the top 15
-// to keep the UI uncluttered: past that the rest goes into an "Other" bucket.
+// queryContainerShares includes "__baseline__" (idle power, not a real
+// container) as an explicit row, so its share isn't missing from the
+// total. Caps at the top 15; the rest would go into an "Other" bucket.
 func queryContainerShares(db *sql.DB, from, to int64) ([]containerShare, error) {
 	rows, err := db.Query(
 		`SELECT container, category, SUM(watts_allocated) / 1000.0 FROM attribution_buckets

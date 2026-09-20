@@ -60,8 +60,7 @@ async function loadKpis() {
     if (current.stale) {
       el.innerHTML += ` <span class="badge-stale">${i18n.t('badge.stale')}</span>`;
     }
-    // Only flash on an actual new reading (a new ts), not on every 30s poll
-    // that happens to see the same stale sample again.
+    // Flash only on an actual new reading, not every poll.
     if (current.ts !== lastPowerTs) {
       lastPowerTs = current.ts;
       const dot = document.getElementById('kpiPulse');
@@ -77,8 +76,7 @@ async function loadKpis() {
     renderSummaryTile('kpiCostToday', 'kpiKwhToday', summary.last24h);
     renderSummaryTile('kpiCostMonth', 'kpiKwhMonth', summary.month);
 
-    // "Cost this month" is the current calendar month, not a rolling 30-day
-    // window: naming the month explicitly avoids that ambiguity.
+    // Name the month explicitly: it's the calendar month, not a rolling 30 days.
     const monthName = new Date(summary.month_start * 1000).toLocaleDateString(i18n.intlTag(), { month: 'long', year: 'numeric' });
     document.getElementById('kpiCostMonthLabel').textContent = i18n.t('kpi.cost_month', { month: monthName });
 
@@ -103,10 +101,6 @@ function renderSummaryTile(costId, kwhId, period) {
   document.getElementById(kwhId).textContent = fmtKwh(period.kwh);
 }
 
-// The applied price is never a single "PUN": it's the monthly PUN average
-// (real for a concluded month, estimated from the previous month/period
-// otherwise) plus a spread, or a custom period. Showing it explicitly
-// answers "what's the price right now?", which the rest of the UI didn't.
 function renderCurrentPrice(price) {
   const el = document.getElementById('kpiCurrentPrice');
   const sub = document.getElementById('kpiCurrentPriceSub');
@@ -122,11 +116,9 @@ function renderCurrentPrice(price) {
 
 // --- Power/energy charts -------------------------------------------------
 
-// Builds the [min, max, avg] dataset trio behind the shaded min-max band:
-// min is an invisible boundary line, max fills back to it ('-1' = fill
-// toward the previous dataset), and avg draws solid on top. Order matters
-// for the fill reference and for linkChartsHover/syncZoomedRange, which
-// always treat the *last* dataset as the interactive one.
+// [min, max, avg] trio for the shaded band: max fills back to min ('-1'),
+// avg draws on top. Order matters — linkChartsHover/syncZoomedRange always
+// treat the *last* dataset as the interactive one.
 function minMaxAvgDatasets(minData, maxData, avgData, lineColor) {
   return [
     { label: i18n.t('chart.min'), data: minData, borderWidth: 0, pointRadius: 0, fill: false },
@@ -138,10 +130,8 @@ function minMaxAvgDatasets(minData, maxData, avgData, lineColor) {
   ];
 }
 
-// No browser API exposes the OS's actual 12h/24h clock preference (that's
-// deliberately withheld, a fingerprinting concern) — the closest available
-// signal is the locale's own convention via Intl. This drives the chart
-// axis ticks; toLocaleString() calls elsewhere already follow it natively.
+// No browser API exposes the OS's 12h/24h preference; fall back to the
+// locale's own convention via Intl.
 function use24Hour() {
   try {
     const cycle = new Intl.DateTimeFormat(i18n.intlTag(), { hour: 'numeric' }).resolvedOptions().hourCycle;
@@ -151,9 +141,7 @@ function use24Hour() {
   }
 }
 
-// Mirrors a zoomed/panned x-axis range onto the paired chart (set via
-// chart._pairChart after both are created) — otherwise zooming the power
-// chart alone would desync it from the CPU chart it's meant to line up with.
+// Mirrors a zoomed/panned x-axis range onto the paired chart (chart._pairChart).
 function syncZoomedRange(chart) {
   const target = chart._pairChart;
   if (!target) return;
@@ -162,10 +150,8 @@ function syncZoomedRange(chart) {
   target.update('none');
 }
 
-// zoomable: wheel/pinch-to-zoom + drag-to-pan on the x (time) axis only —
-// only worth enabling on charts whose data isn't replaced every few
-// seconds (the live charts redraw every 2s poll, so any zoom on them
-// would just get reset before anyone could use it).
+// zoomable: wheel/pinch-zoom + drag-pan on the x axis. Not used on the live
+// charts — they redraw every 2s, so a zoom would get reset immediately.
 function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
   return {
     responsive: true,
@@ -175,9 +161,7 @@ function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
       legend: { display: false }, // single series: the card title already names it
       tooltip: {
         callbacks: {
-          // dataset.label is set for the min/max/avg trio on the historical
-          // charts; the single-series live charts leave it unset and fall
-          // back to the plain unit label, unchanged from before.
+          // dataset.label is set for the min/max/avg trio; live charts fall back to unitLabel.
           label: (ctx) => `${ctx.dataset.label || unitLabel}: ${ctx.parsed.y.toFixed(2)}`,
           title: (items) => new Date(items[0].parsed.x).toLocaleString(i18n.intlTag()),
         },
@@ -200,9 +184,7 @@ function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
         type: 'time',
         time: {
           unit: timeUnit,
-          // The date-fns adapter's default tick formats are hardcoded to
-          // 12h ("ha"/"h:mm a"); without this override, ticks stay in
-          // English AM/PM even when the rest of the UI is in Italian.
+          // Override date-fns's hardcoded 12h tick format.
           displayFormats: use24Hour() ? { hour: 'HH:mm', minute: 'HH:mm' } : { hour: 'h a', minute: 'h:mm a' },
         },
         grid: { color: color('--gridline'), drawTicks: false },
@@ -217,17 +199,12 @@ function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
   };
 }
 
-// --- Synced hover crosshair between a power/CPU chart pair ----------------
-//
-// Chart.js has no built-in way to sync tooltips across two chart instances.
-// Listeners are attached once, on the canvas elements, and read the current
-// chart instance through a getter — charts get destroyed/recreated often
-// (range switch, live poll), a canvas-bound listener would otherwise pile
-// up duplicates or point at a stale, destroyed chart.
+// Syncs the hover crosshair between a power/CPU chart pair. Listeners are
+// attached once on the canvases (not the Chart instances, which get
+// destroyed/recreated on range switches and live polls) and read the
+// current chart through a getter.
 function linkChartsHover(canvasA, getChartA, canvasB, getChartB) {
-  // The historical charts have min/max/avg datasets (in that order, see
-  // loadCharts); the average — always last — is the one the crosshair
-  // should track. Live charts just have the one dataset, also last.
+  // Average is always the last dataset (see minMaxAvgDatasets / the live charts' single dataset).
   function primaryIndex(chart) { return chart.data.datasets.length - 1; }
   function nearestIndex(chart, xVal) {
     const data = chart.data.datasets[primaryIndex(chart)]?.data || [];
@@ -293,11 +270,8 @@ async function loadCharts() {
 
 // --- Live (raw, ~2s) charts ----------------------------------------------
 
-// Builds a chart on first call; on every later call for the same `existing`
-// instance, updates its data in place instead of destroy()/new Chart(). The
-// live charts poll every 2s — recreating them each time briefly cleared
-// the canvas before redrawing, which read as a "blink" rather than a
-// smoothly scrolling live chart.
+// Creates a chart on first call; later calls update its data in place
+// instead of destroy()/recreate, which used to read as a "blink" every poll.
 function upsertLineChart(existing, canvasId, data, lineColor, options) {
   if (existing) {
     existing.data.datasets[0].data = data;
@@ -600,13 +574,12 @@ function loadAll() {
 
 document.getElementById('localeSwitcher').addEventListener('change', async (e) => {
   await i18n.setLocale(e.target.value);
-  // The live charts are updated in place (not recreated) on every poll to
-  // avoid a flicker — but that means a locale change wouldn't otherwise
-  // reach their axis tick format until torn down and rebuilt once here.
+  // Live charts are updated in place, not recreated, so they need an
+  // explicit rebuild to pick up the new tick format.
   livePowerChart?.destroy();
   liveCpuChart?.destroy();
   livePowerChart = liveCpuChart = null;
-  loadAll(); // re-render dynamic content (KPIs, table rows) in the new language
+  loadAll();
 });
 
 // --- startup -----------------------------------------------------------------

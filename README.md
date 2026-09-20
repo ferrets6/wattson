@@ -68,6 +68,8 @@ Optional:
   unset if you're already running this behind a forward-auth proxy.
 - `DEFAULT_SPREAD_EUR_KWH` — spread added to the PUN average when no
   pricing period overrides it (default `0.10`).
+- `HOSTCPU_PROC_STAT_PATH` — path to read for the live CPU chart (default
+  `/proc/stat`, which is the host's own view in a normal Docker setup).
 
 ### One-off history import
 

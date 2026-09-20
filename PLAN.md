@@ -120,25 +120,29 @@ read-only ones) requires a valid session, no exceptions. Off by default
 local development.
 
 - `GET /api/v1/power/current` — latest sample, `stale: true` if older than 2 minutes.
-- `GET /api/v1/power/history?from=&to=` — hourly rollup in [from, to) (unix
-  seconds). Only `groupby=hour`; day/category/service can be added if the
-  frontend ever needs them.
-- `GET /api/v1/power/summary` — kWh and cost for today/this month (Europe/Rome
-  calendar boundaries), `complete: false` if the PUN is missing for any hour.
+- `GET /api/v1/power/history?from=&to=` — minute-level rollup for ranges up
+  to 7 days, hourly beyond that (same response shape either way); includes
+  host CPU avg/min/max alongside power.
+- `GET /api/v1/power/live` — raw power + host CPU (from `/proc`, not
+  Beszel) for the last 15 minutes, for the live dashboard chart.
+- `GET /api/v1/power/summary` — kWh and cost for the last 24h/this month
+  (Europe/Rome calendar boundaries), `complete: false` if the PUN is
+  missing for any hour.
 - `GET/POST/PUT/DELETE /api/v1/pricing/periods` — full CRUD, validation and
   overlap rejection live in `internal/pricing`.
 - `GET /api/v1/pricing/preview?from=&to=&spread=|fixed_price=` — recomputed
   cost for a hypothetical price over a date range, without saving anything.
 - `GET /api/v1/power/attribution?from=&to=` — category/container breakdown
-  from `attribution_buckets` (`__baseline__` excluded from the per-container
-  breakdown, capped at 15 containers).
+  from `attribution_buckets` (`__baseline__` included as an explicit row,
+  capped at 15 containers).
 
 ### 7. Storage — `internal/store`
 
 SQLite via `modernc.org/sqlite` (pure Go, no CGO to compile in Docker).
-Embedded SQL migrations, no heavyweight framework. Raw samples (~every 10s)
-kept for a short window (7 days), then aggregated into hourly rollups for
-long-term history.
+Embedded SQL migrations, no heavyweight framework. Raw samples (~every
+2-10s) kept for a short window (7 days) and feed the live view; rolled up
+into a minute-level tier (~8 days, for "last week" charts) and an hourly
+one (kept forever).
 
 ## Frontend (lightweight SPA) — `cmd/wattson/web/`
 
