@@ -122,6 +122,19 @@ function renderCurrentPrice(price) {
 
 // --- Power/energy charts -------------------------------------------------
 
+// No browser API exposes the OS's actual 12h/24h clock preference (that's
+// deliberately withheld, a fingerprinting concern) — the closest available
+// signal is the locale's own convention via Intl. This drives the chart
+// axis ticks; toLocaleString() calls elsewhere already follow it natively.
+function use24Hour() {
+  try {
+    const cycle = new Intl.DateTimeFormat(i18n.intlTag(), { hour: 'numeric' }).resolvedOptions().hourCycle;
+    return cycle === 'h23' || cycle === 'h24';
+  } catch (e) {
+    return i18n.locale === 'it';
+  }
+}
+
 // Mirrors a zoomed/panned x-axis range onto the paired chart (set via
 // chart._pairChart after both are created) — otherwise zooming the power
 // chart alone would desync it from the CPU chart it's meant to line up with.
@@ -166,7 +179,13 @@ function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
     scales: {
       x: {
         type: 'time',
-        time: { unit: timeUnit },
+        time: {
+          unit: timeUnit,
+          // The date-fns adapter's default tick formats are hardcoded to
+          // 12h ("ha"/"h:mm a"); without this override, ticks stay in
+          // English AM/PM even when the rest of the UI is in Italian.
+          displayFormats: use24Hour() ? { hour: 'HH:mm', minute: 'HH:mm' } : { hour: 'h a', minute: 'h:mm a' },
+        },
         grid: { color: color('--gridline'), drawTicks: false },
         ticks: { color: color('--text-muted'), maxRotation: 0 },
       },
@@ -276,6 +295,36 @@ async function loadCharts() {
 
 // --- Live (raw, ~10s) charts ----------------------------------------------
 
+// Builds a chart on first call; on every later call for the same `existing`
+// instance, updates its data in place instead of destroy()/new Chart(). The
+// live charts poll every 10s — recreating them each time briefly cleared
+// the canvas before redrawing, which read as a "blink" rather than a
+// smoothly scrolling live chart.
+function upsertLineChart(existing, canvasId, data, lineColor, options) {
+  if (existing) {
+    existing.data.datasets[0].data = data;
+    existing.update('none');
+    return existing;
+  }
+  return new Chart(document.getElementById(canvasId), {
+    type: 'line',
+    data: {
+      datasets: [{
+        data,
+        borderColor: lineColor,
+        backgroundColor: hexToRgba(lineColor, 0.1),
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointBackgroundColor: lineColor,
+        fill: true,
+        tension: 0.15,
+      }],
+    },
+    options,
+  });
+}
+
 async function loadLive() {
   let data = { power: [], cpu: [] };
   try {
@@ -287,44 +336,11 @@ async function loadLive() {
   const powerData = (data.power || []).map((p) => ({ x: p.ts * 1000, y: p.value }));
   const cpuData = (data.cpu || []).map((p) => ({ x: p.ts * 1000, y: p.value }));
 
-  livePowerChart?.destroy();
-  livePowerChart = new Chart(document.getElementById('livePowerChart'), {
-    type: 'line',
-    data: {
-      datasets: [{
-        data: powerData,
-        borderColor: color('--power-line'),
-        backgroundColor: hexToRgba(color('--power-line'), 0.1),
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 5,
-        pointBackgroundColor: color('--power-line'),
-        fill: true,
-        tension: 0.15,
-      }],
-    },
-    options: baseLineOptions('W', 'minute'),
-  });
+  livePowerChart = upsertLineChart(livePowerChart, 'livePowerChart', powerData, color('--power-line'), baseLineOptions('W', 'minute'));
 
   const cpuOptions = baseLineOptions('%', 'minute');
-  liveCpuChart?.destroy();
-  liveCpuChart = new Chart(document.getElementById('liveCpuChart'), {
-    type: 'line',
-    data: {
-      datasets: [{
-        data: cpuData,
-        borderColor: color('--cpu-line'),
-        backgroundColor: hexToRgba(color('--cpu-line'), 0.1),
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 5,
-        pointBackgroundColor: color('--cpu-line'),
-        fill: true,
-        tension: 0.15,
-      }],
-    },
-    options: { ...cpuOptions, scales: { ...cpuOptions.scales, y: { ...cpuOptions.scales.y, min: 0 } } },
-  });
+  liveCpuChart = upsertLineChart(liveCpuChart, 'liveCpuChart', cpuData, color('--cpu-line'),
+    { ...cpuOptions, scales: { ...cpuOptions.scales, y: { ...cpuOptions.scales.y, min: 0 } } });
 }
 
 function hexToRgba(hex, alpha) {
@@ -586,6 +602,12 @@ function loadAll() {
 
 document.getElementById('localeSwitcher').addEventListener('change', async (e) => {
   await i18n.setLocale(e.target.value);
+  // The live charts are updated in place (not recreated) on every poll to
+  // avoid a flicker — but that means a locale change wouldn't otherwise
+  // reach their axis tick format until torn down and rebuilt once here.
+  livePowerChart?.destroy();
+  liveCpuChart?.destroy();
+  livePowerChart = liveCpuChart = null;
   loadAll(); // re-render dynamic content (KPIs, table rows) in the new language
 });
 
