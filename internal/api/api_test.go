@@ -63,6 +63,9 @@ func TestPowerHistoryRequiresFromTo(t *testing.T) {
 	}
 }
 
+// Ranges over minutelyRangeThreshold (7 days) are served from power_hourly;
+// this test uses an 8-day span specifically to exercise that path (see
+// TestPowerHistoryUsesMinutelyForShortRanges for the other one).
 func TestPowerHistoryReturnsPointsInRange(t *testing.T) {
 	db, h := newTestServer(t)
 	now := time.Now().Unix()
@@ -70,7 +73,7 @@ func TestPowerHistoryReturnsPointsInRange(t *testing.T) {
 		now-3600, 50.0, 40.0, 60.0, 0.05, 230, 1, 100)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", now-7200, now), nil)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", now-8*24*3600, now), nil)
 	h.ServeHTTP(rec, req)
 
 	var points []powerHourlyPoint
@@ -80,9 +83,37 @@ func TestPowerHistoryReturnsPointsInRange(t *testing.T) {
 	}
 }
 
+// Ranges at or under minutelyRangeThreshold (7 days) -- e.g. the "today"
+// and "7 days" presets -- are served from power_minutely/resource_minutely
+// instead, which is too coarse a rollup for those short windows otherwise.
+func TestPowerHistoryUsesMinutelyForShortRanges(t *testing.T) {
+	db, h := newTestServer(t)
+	now := time.Now().Unix()
+	bucketStart := now - 120
+	db.Exec(`INSERT INTO power_minutely (bucket_start, watts_avg, watts_min, watts_max, sample_count) VALUES (?, ?, ?, ?, ?)`,
+		bucketStart, 45.0, 40.0, 50.0, 30)
+	db.Exec(`INSERT INTO resource_minutely (bucket_start, container, cpu_avg, cpu_min, cpu_max) VALUES (?, '__host__', ?, ?, ?)`,
+		bucketStart, 8.0, 5.0, 11.0)
+	// A power_hourly row in the same window must be ignored: a short-range
+	// request should never fall back to the coarser table.
+	db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		now-3600, 999.0, 999.0, 999.0, 0.05, 230, 1, 100)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", now-3600, now), nil)
+	h.ServeHTTP(rec, req)
+
+	var points []powerHourlyPoint
+	json.NewDecoder(rec.Body).Decode(&points)
+	if len(points) != 1 || points[0].WattsAvg != 45.0 || points[0].CpuAvgPct != 8.0 {
+		t.Errorf("unexpected points: %+v", points)
+	}
+}
+
 func TestPowerHistoryCpuMinMaxFallsBackToAvgWhenMissing(t *testing.T) {
 	db, h := newTestServer(t)
 	now := time.Now().Unix()
+	farEnough := now - 8*24*3600 // forces the hourly path, see minutelyRangeThreshold
 	bucketStart := now - 3600
 	db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		bucketStart, 50.0, 40.0, 60.0, 0.05, 230, 1, 100)
@@ -90,7 +121,7 @@ func TestPowerHistoryCpuMinMaxFallsBackToAvgWhenMissing(t *testing.T) {
 		bucketStart, 10.0, 4.0, 18.0)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", now-7200, now), nil)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", farEnough, now), nil)
 	h.ServeHTTP(rec, req)
 
 	var points []powerHourlyPoint
@@ -107,7 +138,7 @@ func TestPowerHistoryCpuMinMaxFallsBackToAvgWhenMissing(t *testing.T) {
 	db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		bucketStart2, 30.0, 25.0, 35.0, 0.03, 230, 1, 100)
 	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", now-10800, now), nil)
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", farEnough, now), nil)
 	h.ServeHTTP(rec2, req2)
 	var points2 []powerHourlyPoint
 	json.NewDecoder(rec2.Body).Decode(&points2)

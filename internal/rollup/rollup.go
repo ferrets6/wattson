@@ -14,6 +14,7 @@ import (
 )
 
 const bucketSeconds = 3600
+const minuteSeconds = 60
 
 // maxCatchUpBuckets caps how many hours get processed in one run (a safety
 // bound against a pathological catch-up after a long outage); the next run
@@ -23,6 +24,7 @@ const maxCatchUpBuckets = 24 * 30
 // Config are the job's parameters, read from the environment/config by the caller.
 type Config struct {
 	RawRetention       time.Duration // default 7*24h
+	MinutelyRetention  time.Duration // default 8*24h (a bit past a week, see api.minutelyRangeThreshold)
 	BaselineWindow     time.Duration // default 7*24h
 	BaselinePercentile float64       // default 0.1 (10th percentile = "low load")
 	FixedBaselineWatts *float64      // if set, skips the dynamic computation
@@ -32,6 +34,9 @@ type Config struct {
 func (c *Config) applyDefaults() {
 	if c.RawRetention == 0 {
 		c.RawRetention = 7 * 24 * time.Hour
+	}
+	if c.MinutelyRetention == 0 {
+		c.MinutelyRetention = 8 * 24 * time.Hour
 	}
 	if c.BaselineWindow == 0 {
 		c.BaselineWindow = 7 * 24 * time.Hour
@@ -82,6 +87,9 @@ func RunOnce(db *sql.DB, cfg Config) {
 	if err := pruneRaw(db, cfg.RawRetention); err != nil {
 		log.Println("rollup: pruning raw data failed:", err)
 	}
+	if err := pruneMinutely(db, cfg.MinutelyRetention); err != nil {
+		log.Println("rollup: pruning minutely rollup failed:", err)
+	}
 }
 
 func floorToHour(ts int64) int64 { return ts - ts%bucketSeconds }
@@ -129,6 +137,17 @@ func rollupBucket(db *sql.DB, cfg Config, bucketStart int64) error {
 	}
 	if !hasPower {
 		return nil // no samples in this window (e.g. broker down): no row, a gap visible through the API
+	}
+
+	// Minute-level rollup rides along with the hourly one (same cadence,
+	// same raw data already within its 7-day retention) instead of its own
+	// ticker -- the "last week" chart view is fine with data appearing up
+	// to an hour late, and this avoids a second scheduling path.
+	if err := rollupPowerMinutes(db, bucketStart, bucketEnd); err != nil {
+		return err
+	}
+	if err := rollupResourceMinutes(db, bucketStart, bucketEnd); err != nil {
+		return err
 	}
 
 	containers, err := rollupResources(db, bucketStart, bucketEnd)
@@ -189,6 +208,77 @@ func rollupPower(db *sql.DB, bucketStart, bucketEnd int64) (hasPower bool, watts
 		return false, 0, err
 	}
 	return true, avg.Float64, nil
+}
+
+// rollupPowerMinutes fills in power_minutely for every minute in
+// [hourStart, hourEnd) that has raw samples. One query+exec per minute (60
+// per hour): simple and fast enough at this cadence, no need to batch.
+func rollupPowerMinutes(db *sql.DB, hourStart, hourEnd int64) error {
+	for m := hourStart; m < hourEnd; m += minuteSeconds {
+		var count int
+		var avg, wMin, wMax sql.NullFloat64
+		row := db.QueryRow(
+			`SELECT COUNT(*), AVG(watts), MIN(watts), MAX(watts) FROM power_samples WHERE ts >= ? AND ts < ?`,
+			m, m+minuteSeconds,
+		)
+		if err := row.Scan(&count, &avg, &wMin, &wMax); err != nil {
+			return err
+		}
+		if count == 0 {
+			continue // gap: no row, same convention as the hourly rollup
+		}
+		if _, err := db.Exec(
+			`INSERT OR REPLACE INTO power_minutely (bucket_start, watts_avg, watts_min, watts_max, sample_count) VALUES (?, ?, ?, ?, ?)`,
+			m, avg.Float64, wMin.Float64, wMax.Float64, count,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rollupResourceMinutes mirrors rollupPowerMinutes for CPU. Each minute's
+// SELECT is fully buffered before its INSERTs run, same discipline as
+// rollupResources (the pool is capped at one connection, see store.Open).
+func rollupResourceMinutes(db *sql.DB, hourStart, hourEnd int64) error {
+	for m := hourStart; m < hourEnd; m += minuteSeconds {
+		rows, err := db.Query(
+			`SELECT container, AVG(cpu_pct), MIN(cpu_pct), MAX(cpu_pct) FROM resource_samples WHERE ts >= ? AND ts < ? GROUP BY container`,
+			m, m+minuteSeconds,
+		)
+		if err != nil {
+			return err
+		}
+
+		type aggregate struct {
+			container              string
+			cpuAvg, cpuMin, cpuMax sql.NullFloat64
+		}
+		var aggregates []aggregate
+		for rows.Next() {
+			var a aggregate
+			if err := rows.Scan(&a.container, &a.cpuAvg, &a.cpuMin, &a.cpuMax); err != nil {
+				rows.Close()
+				return err
+			}
+			aggregates = append(aggregates, a)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		for _, a := range aggregates {
+			if _, err := db.Exec(
+				`INSERT OR REPLACE INTO resource_minutely (bucket_start, container, cpu_avg, cpu_min, cpu_max) VALUES (?, ?, ?, ?, ?)`,
+				m, a.container, a.cpuAvg.Float64, a.cpuMin.Float64, a.cpuMax.Float64,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 type containerRollup struct {
@@ -299,6 +389,17 @@ func pruneRaw(db *sql.DB, retention time.Duration) error {
 		return err
 	}
 	if _, err := db.Exec(`DELETE FROM resource_samples WHERE ts < ?`, cutoff); err != nil {
+		return err
+	}
+	return nil
+}
+
+func pruneMinutely(db *sql.DB, retention time.Duration) error {
+	cutoff := time.Now().Add(-retention).Unix()
+	if _, err := db.Exec(`DELETE FROM power_minutely WHERE bucket_start < ?`, cutoff); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`DELETE FROM resource_minutely WHERE bucket_start < ?`, cutoff); err != nil {
 		return err
 	}
 	return nil

@@ -257,14 +257,34 @@ binding decisions.
         zero impact on `power_hourly`, which stays 1 row/hour forever
         either way — the actual 10-year-retention table is untouched by
         this change.
-  - **1.2 A full week at 1-minute resolution**: today `power_hourly`/
-    `resource_hourly` are the only long-term rollup (1 row/hour), which is
-    too coarse for a "last 7 days" view. Would need a second rollup tier
-    (e.g. `power_1m`/`resource_1m`, pruned after 7-8 days) sitting between
-    the raw tables (short retention) and the existing hourly one (kept
-    forever) — same idea as Beszel's own multi-tier rollup.
-  - **Before implementing either**: estimate the storage impact of the new
-    tables over the project's 10-year retention horizon. Not expected to
-    be significant (SQLite, same order of magnitude as today), but size it
-    with real row-size numbers before committing to the schema, per
-    CLAUDE.md's own "SQLite, not Postgres" sizing assumption.
+    - **Done (2026-09-20)**: `loadLive()`'s poll dropped from 10s to 2s
+      (`setInterval(loadLive, 2000)` in `app.js`) so the live chart redraws
+      as fast as new raw data can arrive, once Tasmota is repointed and
+      lowered to a 2s `TelePeriod`. Left `loadKpis()` at 30s (the "Current
+      power" tile doesn't need to track every single reading, the pulse
+      dot already shows freshness).
+  - **1.2 A full week at 1-minute resolution (done 2026-09-20)**: added a
+    second rollup tier, `power_minutely`/`resource_minutely` (migration
+    `0003_minutely_rollup.sql`), between the raw tables (7-day retention)
+    and the hourly one (kept forever). Only `watts_avg/min/max` and
+    `cpu_avg/min/max` — no `kwh`, `voltage`, `mem`, `net`: nothing queries
+    those at minute resolution, so they're not computed or stored.
+    `rollup.rollupBucket` fills the 60 one-minute buckets for an hour
+    alongside its existing hourly aggregation (same cadence, same already-
+    fetched raw data — no second ticker/scheduler), and `pruneMinutely`
+    (default retention 8 days, `Config.MinutelyRetention`) runs from the
+    same `RunOnce` pass as the raw-data pruning. `GET /power/history` now
+    picks `power_minutely`/`resource_minutely` for requests spanning at
+    most `minutelyRangeThreshold` (7 days — a bit under the 8-day
+    retention, so a request near the edge doesn't land on data about to be
+    pruned) and `power_hourly`/`resource_hourly` beyond that, transparent
+    to the frontend (same `powerHourlyPoint` JSON shape either way, `kwh`
+    just reads 0 for the minutely path). Storage impact re-confirmed
+    negligible: bounded by the 8-day retention regardless of how long the
+    project runs — this is the "10-year sizing" concern from the original
+    ask, and it doesn't apply here since the table never grows past that
+    window. Verified against the real local dev DB: a 1-day request
+    returned minute-spaced points from `power_minutely`, an 8-day request
+    returned hour-spaced points from `power_hourly`, and a `power_hourly`
+    row placed inside a short-range request's window was correctly
+    ignored (confirmed no silent fallback to the coarser table).
