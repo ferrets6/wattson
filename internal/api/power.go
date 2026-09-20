@@ -44,6 +44,8 @@ type powerHourlyPoint struct {
 	WattsMax    float64 `json:"watts_max"`
 	Kwh         float64 `json:"kwh"`
 	CpuAvgPct   float64 `json:"cpu_avg_pct"`
+	CpuMinPct   float64 `json:"cpu_min_pct"`
+	CpuMaxPct   float64 `json:"cpu_max_pct"`
 }
 
 // powerHistoryHandler returns the hourly rollup in [from, to), plus the
@@ -59,7 +61,8 @@ func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(
-			`SELECT ph.bucket_start, ph.watts_avg, ph.watts_min, ph.watts_max, ph.kwh, COALESCE(rh.cpu_avg, 0)
+			`SELECT ph.bucket_start, ph.watts_avg, ph.watts_min, ph.watts_max, ph.kwh,
+			        COALESCE(rh.cpu_avg, 0), COALESCE(rh.cpu_min, rh.cpu_avg, 0), COALESCE(rh.cpu_max, rh.cpu_avg, 0)
 			 FROM power_hourly ph
 			 LEFT JOIN resource_hourly rh ON rh.bucket_start = ph.bucket_start AND rh.container = '__host__'
 			 WHERE ph.bucket_start >= ? AND ph.bucket_start < ?
@@ -75,7 +78,7 @@ func powerHistoryHandler(db *sql.DB) http.HandlerFunc {
 		points := []powerHourlyPoint{}
 		for rows.Next() {
 			var p powerHourlyPoint
-			if err := rows.Scan(&p.BucketStart, &p.WattsAvg, &p.WattsMin, &p.WattsMax, &p.Kwh, &p.CpuAvgPct); err != nil {
+			if err := rows.Scan(&p.BucketStart, &p.WattsAvg, &p.WattsMin, &p.WattsMax, &p.Kwh, &p.CpuAvgPct, &p.CpuMinPct, &p.CpuMaxPct); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal error")
 				return
 			}

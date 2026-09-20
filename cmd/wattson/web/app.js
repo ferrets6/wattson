@@ -122,6 +122,22 @@ function renderCurrentPrice(price) {
 
 // --- Power/energy charts -------------------------------------------------
 
+// Builds the [min, max, avg] dataset trio behind the shaded min-max band:
+// min is an invisible boundary line, max fills back to it ('-1' = fill
+// toward the previous dataset), and avg draws solid on top. Order matters
+// for the fill reference and for linkChartsHover/syncZoomedRange, which
+// always treat the *last* dataset as the interactive one.
+function minMaxAvgDatasets(minData, maxData, avgData, lineColor) {
+  return [
+    { label: i18n.t('chart.min'), data: minData, borderWidth: 0, pointRadius: 0, fill: false },
+    { label: i18n.t('chart.max'), data: maxData, borderWidth: 0, pointRadius: 0, backgroundColor: hexToRgba(lineColor, 0.15), fill: '-1' },
+    {
+      label: i18n.t('chart.avg'), data: avgData, borderColor: lineColor, backgroundColor: hexToRgba(lineColor, 0.1),
+      borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, pointBackgroundColor: lineColor, fill: false, tension: 0.15,
+    },
+  ];
+}
+
 // No browser API exposes the OS's actual 12h/24h clock preference (that's
 // deliberately withheld, a fingerprinting concern) — the closest available
 // signal is the locale's own convention via Intl. This drives the chart
@@ -159,7 +175,10 @@ function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
       legend: { display: false }, // single series: the card title already names it
       tooltip: {
         callbacks: {
-          label: (ctx) => `${unitLabel}: ${ctx.parsed.y.toFixed(2)}`,
+          // dataset.label is set for the min/max/avg trio on the historical
+          // charts; the single-series live charts leave it unset and fall
+          // back to the plain unit label, unchanged from before.
+          label: (ctx) => `${ctx.dataset.label || unitLabel}: ${ctx.parsed.y.toFixed(2)}`,
           title: (items) => new Date(items[0].parsed.x).toLocaleString(i18n.intlTag()),
         },
       },
@@ -206,8 +225,12 @@ function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
 // (range switch, live poll), a canvas-bound listener would otherwise pile
 // up duplicates or point at a stale, destroyed chart.
 function linkChartsHover(canvasA, getChartA, canvasB, getChartB) {
+  // The historical charts have min/max/avg datasets (in that order, see
+  // loadCharts); the average — always last — is the one the crosshair
+  // should track. Live charts just have the one dataset, also last.
+  function primaryIndex(chart) { return chart.data.datasets.length - 1; }
   function nearestIndex(chart, xVal) {
-    const data = chart.data.datasets[0]?.data || [];
+    const data = chart.data.datasets[primaryIndex(chart)]?.data || [];
     let idx = -1, min = Infinity;
     for (let i = 0; i < data.length; i++) {
       const d = Math.abs(data[i].x - xVal);
@@ -217,7 +240,7 @@ function linkChartsHover(canvasA, getChartA, canvasB, getChartB) {
   }
   function setActive(chart, idx) {
     if (!chart) return;
-    const active = idx < 0 ? [] : [{ datasetIndex: 0, index: idx }];
+    const active = idx < 0 ? [] : [{ datasetIndex: primaryIndex(chart), index: idx }];
     chart.tooltip.setActiveElements(active, { x: 0, y: 0 });
     chart.setActiveElements(active);
     chart.update('none');
@@ -246,25 +269,12 @@ async function loadCharts() {
     points = [];
   }
 
-  const powerData = points.map((p) => ({ x: p.bucket_start * 1000, y: p.watts_avg }));
-  const cpuData = points.map((p) => ({ x: p.bucket_start * 1000, y: p.cpu_avg_pct }));
+  const toSeries = (field) => points.map((p) => ({ x: p.bucket_start * 1000, y: p[field] }));
 
   powerChart?.destroy();
   powerChart = new Chart(document.getElementById('powerChart'), {
     type: 'line',
-    data: {
-      datasets: [{
-        data: powerData,
-        borderColor: color('--power-line'),
-        backgroundColor: hexToRgba(color('--power-line'), 0.1),
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 5,
-        pointBackgroundColor: color('--power-line'),
-        fill: true,
-        tension: 0.15,
-      }],
-    },
+    data: { datasets: minMaxAvgDatasets(toSeries('watts_min'), toSeries('watts_max'), toSeries('watts_avg'), color('--power-line')) },
     options: baseLineOptions('W', 'hour', true),
   });
 
@@ -272,19 +282,7 @@ async function loadCharts() {
   cpuChart?.destroy();
   cpuChart = new Chart(document.getElementById('cpuChart'), {
     type: 'line',
-    data: {
-      datasets: [{
-        data: cpuData,
-        borderColor: color('--cpu-line'),
-        backgroundColor: hexToRgba(color('--cpu-line'), 0.1),
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 5,
-        pointBackgroundColor: color('--cpu-line'),
-        fill: true,
-        tension: 0.15,
-      }],
-    },
+    data: { datasets: minMaxAvgDatasets(toSeries('cpu_min_pct'), toSeries('cpu_max_pct'), toSeries('cpu_avg_pct'), color('--cpu-line')) },
     options: { ...cpuOptions, scales: { ...cpuOptions.scales, y: { ...cpuOptions.scales.y, min: 0 } } },
   });
 

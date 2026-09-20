@@ -206,7 +206,7 @@ type containerRollup struct {
 // connection nothing will ever release.
 func rollupResources(db *sql.DB, bucketStart, bucketEnd int64) ([]containerRollup, error) {
 	rows, err := db.Query(
-		`SELECT container, AVG(cpu_pct), AVG(mem_used), AVG(net_sent_bytes), AVG(net_recv_bytes), AVG(disk_io_bytes)
+		`SELECT container, AVG(cpu_pct), MIN(cpu_pct), MAX(cpu_pct), AVG(mem_used), AVG(net_sent_bytes), AVG(net_recv_bytes), AVG(disk_io_bytes)
 		 FROM resource_samples WHERE ts >= ? AND ts < ? GROUP BY container`,
 		bucketStart, bucketEnd,
 	)
@@ -215,14 +215,14 @@ func rollupResources(db *sql.DB, bucketStart, bucketEnd int64) ([]containerRollu
 	}
 
 	type aggregate struct {
-		container                              string
-		cpuAvg, memAvg, netSentAvg, netRecvAvg sql.NullFloat64
-		diskAvg                                sql.NullFloat64
+		container                                              string
+		cpuAvg, cpuMin, cpuMax, memAvg, netSentAvg, netRecvAvg sql.NullFloat64
+		diskAvg                                                sql.NullFloat64
 	}
 	var aggregates []aggregate
 	for rows.Next() {
 		var a aggregate
-		if err := rows.Scan(&a.container, &a.cpuAvg, &a.memAvg, &a.netSentAvg, &a.netRecvAvg, &a.diskAvg); err != nil {
+		if err := rows.Scan(&a.container, &a.cpuAvg, &a.cpuMin, &a.cpuMax, &a.memAvg, &a.netSentAvg, &a.netRecvAvg, &a.diskAvg); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -237,9 +237,9 @@ func rollupResources(db *sql.DB, bucketStart, bucketEnd int64) ([]containerRollu
 	result := make([]containerRollup, 0, len(aggregates))
 	for _, a := range aggregates {
 		if _, err := db.Exec(
-			`INSERT OR REPLACE INTO resource_hourly (bucket_start, container, cpu_avg, mem_used_avg, net_sent_bytes_avg, net_recv_bytes_avg, disk_io_bytes_avg)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			bucketStart, a.container, a.cpuAvg.Float64, a.memAvg.Float64, a.netSentAvg.Float64, a.netRecvAvg.Float64, nullableFloat(a.diskAvg),
+			`INSERT OR REPLACE INTO resource_hourly (bucket_start, container, cpu_avg, cpu_min, cpu_max, mem_used_avg, net_sent_bytes_avg, net_recv_bytes_avg, disk_io_bytes_avg)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			bucketStart, a.container, a.cpuAvg.Float64, a.cpuMin.Float64, a.cpuMax.Float64, a.memAvg.Float64, a.netSentAvg.Float64, a.netRecvAvg.Float64, nullableFloat(a.diskAvg),
 		); err != nil {
 			return nil, err
 		}

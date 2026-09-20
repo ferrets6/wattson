@@ -80,6 +80,46 @@ func TestPowerHistoryReturnsPointsInRange(t *testing.T) {
 	}
 }
 
+func TestPowerHistoryCpuMinMaxFallsBackToAvgWhenMissing(t *testing.T) {
+	db, h := newTestServer(t)
+	now := time.Now().Unix()
+	bucketStart := now - 3600
+	db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		bucketStart, 50.0, 40.0, 60.0, 0.05, 230, 1, 100)
+	db.Exec(`INSERT INTO resource_hourly (bucket_start, container, cpu_avg, cpu_min, cpu_max, mem_used_avg, net_sent_bytes_avg, net_recv_bytes_avg) VALUES (?, '__host__', ?, ?, ?, 0, 0, 0)`,
+		bucketStart, 10.0, 4.0, 18.0)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", now-7200, now), nil)
+	h.ServeHTTP(rec, req)
+
+	var points []powerHourlyPoint
+	json.NewDecoder(rec.Body).Decode(&points)
+	if len(points) != 1 || points[0].CpuAvgPct != 10.0 || points[0].CpuMinPct != 4.0 || points[0].CpuMaxPct != 18.0 {
+		t.Errorf("unexpected points: %+v", points)
+	}
+
+	// A second bucket with no resource_hourly row at all (Beszel gap):
+	// min/max must fall back to avg (0 here) instead of surfacing as null/0
+	// disagreeing with avg, which would draw an empty band around a
+	// nonzero-looking average.
+	bucketStart2 := now - 7200
+	db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		bucketStart2, 30.0, 25.0, 35.0, 0.03, 230, 1, 100)
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", now-10800, now), nil)
+	h.ServeHTTP(rec2, req2)
+	var points2 []powerHourlyPoint
+	json.NewDecoder(rec2.Body).Decode(&points2)
+	if len(points2) != 2 {
+		t.Fatalf("expected 2 points, got %d: %+v", len(points2), points2)
+	}
+	if points2[0].CpuAvgPct != 0 || points2[0].CpuMinPct != 0 || points2[0].CpuMaxPct != 0 {
+		t.Errorf("bucket with no resource_hourly row: cpu avg/min/max = %v/%v/%v, want 0/0/0",
+			points2[0].CpuAvgPct, points2[0].CpuMinPct, points2[0].CpuMaxPct)
+	}
+}
+
 func TestPowerLiveReturnsRecentRawSamplesOnly(t *testing.T) {
 	db, h := newTestServer(t)
 	now := time.Now().Unix()
