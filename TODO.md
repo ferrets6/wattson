@@ -129,6 +129,28 @@ binding decisions.
   part beyond the hour (Beszel would have already rolled it up to 10m by
   the time Wattson polls again), though coarser data would still exist.
   No action needed at Wattson's current poll interval.
+- **Live chart "blinks" on every refresh (fixed 2026-09-20)**: `loadLive()`
+  used to `destroy()`/`new Chart()` on every 10s poll, visibly emptying and
+  refilling the canvas. `upsertLineChart()` now creates the chart once and
+  updates its dataset's `data` + calls `chart.update('none')` on every
+  later poll instead. Verified in the browser: the chart's own `id` stays
+  the same across polls while the data keeps advancing — no
+  destroy/recreate, no flicker.
+- **12h vs 24h time format (fixed 2026-09-20)**: there's no browser API
+  that exposes the OS's actual clock-format preference (deliberately
+  withheld, a fingerprinting concern) — used the closest available signal,
+  `Intl.DateTimeFormat(i18n.intlTag()).resolvedOptions().hourCycle`, via a
+  new `use24Hour()` helper. `toLocaleString()`/`toLocaleDateString()` calls
+  (tooltips, month label) already followed locale convention automatically
+  and needed no change; the real bug was the chart axis *ticks*, which
+  `chartjs-adapter-date-fns` formats with hardcoded 12h patterns
+  regardless of locale — fixed by setting `time.displayFormats` explicitly
+  per `use24Hour()` in `baseLineOptions()`. Verified in the browser: hourly
+  and live chart ticks show `HH:mm` in Italian, `h a`/`h:mm a` in English,
+  and switching the language dropdown updates both immediately (the live
+  charts are now updated in place rather than recreated, so the locale
+  switch handler explicitly tears them down once to pick up the new
+  format).
 
 ## Open
 - **Idle baseline calibration (2026-09-19, calculated from real data)**:
@@ -183,23 +205,3 @@ binding decisions.
   average) rather than a backend change, except for the CPU chart, which
   would need `resource_hourly` to gain `cpu_min`/`cpu_max` columns (today
   it only has `cpu_avg`). Not started.
-- **Live chart "blinks" on every refresh**: `loadLive()` destroys and
-  recreates the chart from scratch every 10s poll, so it visibly empties
-  and refills instead of scrolling smoothly like a normal live chart.
-  Fix: keep the `Chart` instance alive across polls and update its
-  dataset's data array + call `chart.update()` (or append only the new
-  points and shift old ones out of the sliding window), instead of
-  `destroy()`/`new Chart()` each time. Not started.
-- **12h vs 24h time format**: there's no browser API that exposes the OS's
-  actual clock-format preference (that's deliberately not exposed, a
-  fingerprinting concern) — the closest thing is
-  `Intl.DateTimeFormat(locale).resolvedOptions().hourCycle`, which infers
-  it from the *locale's convention* (e.g. `it-IT` → 24h, `en-US` → 12h),
-  not the user's own OS override. Times are currently formatted via
-  `toLocaleString(i18n.intlTag())` (chart tooltips) and
-  `toLocaleDateString(...)` (month label) without an explicit `hour12`/
-  `hourCycle`, so they already follow locale convention by default. At
-  minimum, explicitly force 24h for the Italian locale (`it-IT` already
-  defaults to 24h in every browser tested, but pin it rather than rely on
-  an assumption) and use `resolvedOptions().hourCycle` as the "automatic"
-  signal for English rather than hardcoding 12h. Not started.
