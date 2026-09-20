@@ -188,21 +188,43 @@ binding decisions.
 
 ### Data granularity + chart rework (2026-09-20, requested by the user)
 
-- **Increase data granularity** — two parts, not started:
+- **Increase data granularity** — two parts:
   - **1.1 Live view at 2s resolution**: both power and CPU, for the last
-    hour. Needs evaluation on both ends: the Tasmota "Sonoff Dual Meter"
-    publishes `tele/tasmota/SENSOR` roughly every ~10s today (a
-    `TelePeriod` change would be needed on the device itself, not in
-    Wattson); Beszel's own finest resolution is 1m (see the retention note
-    above) — its agent's own poll interval would need lowering, if that's
-    even configurable, or Wattson would need to poll Beszel's *live* stats
-    endpoint (if one exists) rather than its stored `1m` stats. Needs
-    research on both the Tasmota and Beszel side before any Wattson code
-    changes — don't assume either is a simple config flip. Once live data
-    actually arrives at ~2s, the "Current power" freshness pulse dot
-    should keep flashing correctly at that rate too (it already flashes on
-    every genuinely new `ts`, not on a fixed timer — just needs to be
-    re-verified once the faster feed is real, not re-implemented).
+    hour. **Research done (2026-09-20), result: blocked on both sides.**
+    - **Beszel side — hard no via the REST API.** Queried
+      `system_stats` directly (`type='1m'` records): consecutive rows are
+      exactly 60.00s apart (`09:18:47.033`, `09:17:47.005`,
+      `09:16:47.012`, ...). That's not a display rollup, it's genuinely
+      the finest data the hub ever persists — `10m`/`20m`/`120m`/`480m`
+      are coarser aggregates of that same 1-per-minute series. Polling
+      Beszel's REST API more often than every 60s would just re-read the
+      same row; there is no 2s (or even sub-minute) data to fetch. The
+      per-system page's live badge *does* visibly update faster than that
+      in the UI, which means the agent pushes a faster real-time reading
+      over its own websocket channel purely for that "right now" display
+      — but that channel isn't a documented/stable data source, isn't
+      persisted, and building a collector around it would be brittle. Not
+      pursuing 2s CPU via Beszel; would need a fundamentally different
+      source (e.g. Wattson reading `/proc` directly on the host, its own
+      separate scope decision) if this is still wanted.
+    - **Tasmota side — blocked on a stale address, not a research
+      dead-end.** CLAUDE.md documents the wattmeter at
+      `http://tasmota.example.lan`, but that doesn't respond from any
+      vantage point tried (this dev machine, the NAS, the broker host):
+      its web port is connection-refused everywhere, and port 80 answers
+      with an unrelated nginx 404, so it's likely not even the same
+      device. Checked ARP and dnsmasq/Pi-hole leases on the broker host for
+      a `tasmota` hostname — nothing found (no mDNS/ARP-scan tooling
+      installed there either). The device is still alive and publishing
+      (Wattson's own MQTT collector keeps receiving live readings all
+      session), so this is just a stale IP, not a dead device. Needs the
+      current IP/port from whoever manages the router/DHCP — CLAUDE.md's
+      URL should be corrected once known.
+    - Once live data actually arrives at ~2s (power side, if unblocked),
+      the "Current power" freshness pulse dot should keep flashing
+      correctly at that rate too — it already flashes on every genuinely
+      new `ts`, not on a fixed timer, so this just needs re-verifying,
+      not re-implementing.
   - **1.2 A full week at 1-minute resolution**: today `power_hourly`/
     `resource_hourly` are the only long-term rollup (1 row/hour), which is
     too coarse for a "last 7 days" view. Would need a second rollup tier
