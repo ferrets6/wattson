@@ -123,26 +123,43 @@ type liveResponse struct {
 const liveWindow = 15 * time.Minute
 
 // powerLiveHandler returns raw power and host CPU samples from the last
-// liveWindow. CPU comes from host_cpu_samples (internal/hostcpu, ~2s from
-// /proc/stat) rather than Beszel, which only updates once a minute — too
-// coarse for this view. The two series aren't timestamp-aligned, so the
-// frontend charts them on a shared time axis rather than by index.
+// liveWindow, or only whatever's newer than power_since/cpu_since if given
+// — the frontend polls this every 2s and, after its first full-window
+// fetch, only needs the new points since its last poll, not the whole
+// window resent each time. CPU comes from host_cpu_samples (internal/
+// hostcpu, ~2s from /proc/stat) rather than Beszel, which only updates
+// once a minute — too coarse for this view. The two series aren't
+// timestamp-aligned, so the frontend charts them on a shared time axis
+// rather than by index.
 func powerLiveHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		since := time.Now().Add(-liveWindow).Unix()
+		windowStart := time.Now().Add(-liveWindow).Unix()
+		powerSince := sinceParam(r, "power_since", windowStart)
+		cpuSince := sinceParam(r, "cpu_since", windowStart)
 
-		power, err := queryLiveSeries(db, `SELECT ts, watts FROM power_samples WHERE ts >= ? ORDER BY ts`, since)
+		power, err := queryLiveSeries(db, `SELECT ts, watts FROM power_samples WHERE ts > ? ORDER BY ts`, powerSince)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		cpu, err := queryLiveSeries(db, `SELECT ts, cpu_pct FROM host_cpu_samples WHERE ts >= ? ORDER BY ts`, since)
+		cpu, err := queryLiveSeries(db, `SELECT ts, cpu_pct FROM host_cpu_samples WHERE ts > ? ORDER BY ts`, cpuSince)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		writeJSON(w, http.StatusOK, liveResponse{Power: power, Cpu: cpu})
 	}
+}
+
+// sinceParam reads an incremental-fetch cursor from the query string,
+// falling back to (and never going earlier than) windowStart.
+func sinceParam(r *http.Request, name string, windowStart int64) int64 {
+	if s := r.URL.Query().Get(name); s != "" {
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil && v > windowStart {
+			return v
+		}
+	}
+	return windowStart
 }
 
 func queryLiveSeries(db *sql.DB, query string, since int64) ([]livePoint, error) {
