@@ -57,6 +57,18 @@ Status tracker. Done = one-liners. Open = enough context to act on. See
   Beszel, which is what they actually need.
 - **Beszel retention confirmed**: its finest resolution is 1 minute
   (checked via its own API); Wattson's 30s poll has ample margin.
+- **Live-chart fixes (2026-09-20)**: pulse dot now flashes on the live
+  feed's own cadence (was tied to a separate 30s poll, so it drifted);
+  live charts show min/max/avg bands too (client-side bucketing of the raw
+  points, 15s buckets); `/power/live` takes `power_since`/`cpu_since` so
+  each 2s poll only fetches new points instead of the whole 15-minute
+  window again; zoom on the hourly charts is capped at a 30-minute span
+  and the tick scale now auto-adjusts to the zoomed range (was stuck on a
+  fixed hour/minute unit); "Today" renamed to "Last 24h" (it was always a
+  rolling 24h window, not since-midnight — that mislabeling read as data
+  missing before noon); custom range inputs are now datetime-local
+  (time-of-day selectable, not just a date), with "until" defaulting to
+  now.
 
 ## Open
 

@@ -13,17 +13,26 @@ const CATEGORY_COLORS = {
 const categoryLabel = (c) => i18n.t(`category.${c}`) || c;
 
 let currentRange = 'today';
-let customFrom = null, customUntil = null; // YYYY-MM-DD, both set together or not at all
+let customFrom = null, customUntil = null; // datetime-local strings, both set together or not at all
 let powerChart, cpuChart, categoryChart;
 let livePowerChart, liveCpuChart;
 let lastPowerTs = null;
 
-// A custom date range (from the two date inputs) takes over from the
-// preset buttons entirely; clearing it falls back to the active preset.
+// Formats "now" for a <input type="datetime-local"> value (local wall-clock time).
+function nowForDatetimeLocal() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
+// A custom date range (from the two datetime-local inputs) takes over from
+// the presets entirely; clearing it falls back to the active preset. The
+// presets are rolling windows ending now, e.g. "Last 24h" is literally the
+// last 24 hours, not "since local midnight".
 function rangeToUnix() {
   if (customFrom) {
-    const from = Math.floor(new Date(`${customFrom}T00:00:00`).getTime() / 1000);
-    const to = customUntil ? Math.floor(new Date(`${customUntil}T23:59:59`).getTime() / 1000) : Math.floor(Date.now() / 1000);
+    const from = Math.floor(new Date(customFrom).getTime() / 1000);
+    const to = customUntil ? Math.floor(new Date(customUntil).getTime() / 1000) : Math.floor(Date.now() / 1000);
     return { from, to };
   }
   const now = Math.floor(Date.now() / 1000);
@@ -52,25 +61,23 @@ function fmtKwh(v) {
 
 // --- KPI row -----------------------------------------------------------
 
-async function loadKpis() {
-  try {
-    const current = await api('/api/v1/power/current');
-    const el = document.getElementById('kpiPower');
-    el.innerHTML = `${fmtWatts(current.watts)}<span class="pulse-dot" id="kpiPulse" title="Updates when a new reading arrives"></span>`;
-    if (current.stale) {
-      el.innerHTML += ` <span class="badge-stale">${i18n.t('badge.stale')}</span>`;
-    }
-    // Flash only on an actual new reading, not every poll.
-    if (current.ts !== lastPowerTs) {
-      lastPowerTs = current.ts;
-      const dot = document.getElementById('kpiPulse');
-      dot.classList.add('pulse-flash');
-      dot.addEventListener('animationend', () => dot.classList.remove('pulse-flash'), { once: true });
-    }
-  } catch (e) {
-    document.getElementById('kpiPower').textContent = i18n.t('price.na');
+// Drives the "Current power" tile from the live feed (polled every 2s, see
+// loadLive) instead of a separate /power/current poll, so the freshness
+// pulse flashes at the same cadence as the live chart actually updates.
+function updateCurrentPowerKpi(tsSeconds, watts) {
+  const el = document.getElementById('kpiPower');
+  const stale = (Date.now() / 1000 - tsSeconds) > 120;
+  el.innerHTML = `${fmtWatts(watts)}<span class="pulse-dot" id="kpiPulse" title="Updates when a new reading arrives"></span>`;
+  if (stale) el.innerHTML += ` <span class="badge-stale">${i18n.t('badge.stale')}</span>`;
+  if (tsSeconds !== lastPowerTs) {
+    lastPowerTs = tsSeconds;
+    const dot = document.getElementById('kpiPulse');
+    dot.classList.add('pulse-flash');
+    dot.addEventListener('animationend', () => dot.classList.remove('pulse-flash'), { once: true });
   }
+}
 
+async function loadKpis() {
   try {
     const summary = await api('/api/v1/power/summary');
     renderSummaryTile('kpiCostToday', 'kpiKwhToday', summary.last24h);
@@ -150,9 +157,15 @@ function syncZoomedRange(chart) {
   target.update('none');
 }
 
-// zoomable: wheel/pinch-zoom + drag-pan on the x axis. Not used on the live
-// charts — they redraw every 2s, so a zoom would get reset immediately.
-function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
+// Deepest zoom allowed on a chart pair: below this span the minute-level
+// rollup has nothing more to show anyway, and zooming further just loses
+// context.
+const MIN_ZOOM_RANGE_MS = 30 * 60 * 1000;
+
+// zoomable: wheel/pinch-zoom + drag-pan on the x axis, capped at
+// MIN_ZOOM_RANGE_MS. Not used on the live charts — they redraw every 2s,
+// so a zoom would get reset immediately.
+function baseLineOptions(unitLabel, zoomable = false) {
   return {
     responsive: true,
     maintainAspectRatio: false,
@@ -168,7 +181,7 @@ function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
       },
       ...(zoomable ? {
         zoom: {
-          limits: { x: { min: 'original', max: 'original' } },
+          limits: { x: { min: 'original', max: 'original', minRange: MIN_ZOOM_RANGE_MS } },
           pan: { enabled: true, mode: 'x', onPanComplete: ({ chart }) => syncZoomedRange(chart) },
           zoom: {
             wheel: { enabled: true },
@@ -182,10 +195,14 @@ function baseLineOptions(unitLabel, timeUnit = 'hour', zoomable = false) {
     scales: {
       x: {
         type: 'time',
+        // No fixed `unit`: letting Chart.js auto-pick based on the visible
+        // (possibly zoomed) span is what makes the tick scale adapt when
+        // zooming in, instead of staying stuck on whatever the chart
+        // started at.
         time: {
-          unit: timeUnit,
-          // Override date-fns's hardcoded 12h tick format.
-          displayFormats: use24Hour() ? { hour: 'HH:mm', minute: 'HH:mm' } : { hour: 'h a', minute: 'h:mm a' },
+          displayFormats: use24Hour()
+            ? { minute: 'HH:mm', hour: 'HH:mm', day: 'MMM d' }
+            : { minute: 'h:mm a', hour: 'h a', day: 'MMM d' },
         },
         grid: { color: color('--gridline'), drawTicks: false },
         ticks: { color: color('--text-muted'), maxRotation: 0 },
@@ -252,10 +269,10 @@ async function loadCharts() {
   powerChart = new Chart(document.getElementById('powerChart'), {
     type: 'line',
     data: { datasets: minMaxAvgDatasets(toSeries('watts_min'), toSeries('watts_max'), toSeries('watts_avg'), color('--power-line')) },
-    options: baseLineOptions('W', 'hour', true),
+    options: baseLineOptions('W', true),
   });
 
-  const cpuOptions = baseLineOptions('%', 'hour', true);
+  const cpuOptions = baseLineOptions('%', true);
   cpuChart?.destroy();
   cpuChart = new Chart(document.getElementById('cpuChart'), {
     type: 'line',
@@ -270,48 +287,89 @@ async function loadCharts() {
 
 // --- Live (raw, ~2s) charts ----------------------------------------------
 
-// Creates a chart on first call; later calls update its data in place
-// instead of destroy()/recreate, which used to read as a "blink" every poll.
-function upsertLineChart(existing, canvasId, data, lineColor, options) {
+// Creates a chart on first call; later calls update its datasets' data in
+// place instead of destroy()/recreate, which used to read as a "blink"
+// every poll.
+function upsertChart(existing, canvasId, datasets, options) {
   if (existing) {
-    existing.data.datasets[0].data = data;
+    datasets.forEach((ds, i) => { existing.data.datasets[i].data = ds.data; });
     existing.update('none');
     return existing;
   }
-  return new Chart(document.getElementById(canvasId), {
-    type: 'line',
-    data: {
-      datasets: [{
-        data,
-        borderColor: lineColor,
-        backgroundColor: hexToRgba(lineColor, 0.1),
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 5,
-        pointBackgroundColor: lineColor,
-        fill: true,
-        tension: 0.15,
-      }],
-    },
-    options,
-  });
+  return new Chart(document.getElementById(canvasId), { type: 'line', data: { datasets }, options });
 }
 
+const LIVE_WINDOW_MS = 15 * 60 * 1000;
+const LIVE_BUCKET_MS = 15 * 1000; // groups raw ~2-10s samples for a min/max/avg band, same idea as the hourly charts
+
+function pruneOlderThanWindow(points, nowMs) {
+  while (points.length && nowMs - points[0].x > LIVE_WINDOW_MS) points.shift();
+}
+
+// Buckets raw {x,y} points into fixed-width time buckets and returns the
+// [min, max, avg] series minMaxAvgDatasets expects.
+function bucketize(points, bucketMs) {
+  const buckets = new Map();
+  for (const p of points) {
+    const key = Math.floor(p.x / bucketMs) * bucketMs;
+    let b = buckets.get(key);
+    if (!b) { b = { sum: 0, count: 0, min: p.y, max: p.y }; buckets.set(key, b); }
+    b.sum += p.y;
+    b.count += 1;
+    b.min = Math.min(b.min, p.y);
+    b.max = Math.max(b.max, p.y);
+  }
+  const keys = [...buckets.keys()].sort((a, b) => a - b);
+  return {
+    min: keys.map((k) => ({ x: k, y: buckets.get(k).min })),
+    max: keys.map((k) => ({ x: k, y: buckets.get(k).max })),
+    avg: keys.map((k) => ({ x: k, y: buckets.get(k).sum / buckets.get(k).count })),
+  };
+}
+
+// Accumulated raw points for the live window; loadLive only fetches
+// what's new since the last poll (see power_since/cpu_since) and appends
+// here, instead of re-fetching the whole 15-minute window every 2s.
+let livePowerRaw = [], liveCpuRaw = [];
+let livePowerSince = null, liveCpuSince = null;
+
 async function loadLive() {
-  let data = { power: [], cpu: [] };
+  let data;
   try {
-    data = await api('/api/v1/power/live');
+    const params = livePowerSince ? `?power_since=${livePowerSince}&cpu_since=${liveCpuSince}` : '';
+    data = await api(`/api/v1/power/live${params}`);
   } catch (e) {
     return; // keep whatever was last rendered rather than clearing it
   }
 
-  const powerData = (data.power || []).map((p) => ({ x: p.ts * 1000, y: p.value }));
-  const cpuData = (data.cpu || []).map((p) => ({ x: p.ts * 1000, y: p.value }));
+  const newPower = (data.power || []).map((p) => ({ x: p.ts * 1000, y: p.value }));
+  const newCpu = (data.cpu || []).map((p) => ({ x: p.ts * 1000, y: p.value }));
+  livePowerRaw.push(...newPower);
+  liveCpuRaw.push(...newCpu);
 
-  livePowerChart = upsertLineChart(livePowerChart, 'livePowerChart', powerData, color('--power-line'), baseLineOptions('W', 'minute'));
+  const nowMs = Date.now();
+  pruneOlderThanWindow(livePowerRaw, nowMs);
+  pruneOlderThanWindow(liveCpuRaw, nowMs);
 
-  const cpuOptions = baseLineOptions('%', 'minute');
-  liveCpuChart = upsertLineChart(liveCpuChart, 'liveCpuChart', cpuData, color('--cpu-line'),
+  const latestPower = livePowerRaw[livePowerRaw.length - 1];
+  if (latestPower) {
+    livePowerSince = Math.floor(latestPower.x / 1000);
+    updateCurrentPowerKpi(livePowerSince, latestPower.y);
+  } else if (!livePowerSince) {
+    document.getElementById('kpiPower').textContent = i18n.t('price.na');
+  }
+  const latestCpu = liveCpuRaw[liveCpuRaw.length - 1];
+  if (latestCpu) liveCpuSince = Math.floor(latestCpu.x / 1000);
+
+  const powerBuckets = bucketize(livePowerRaw, LIVE_BUCKET_MS);
+  livePowerChart = upsertChart(livePowerChart, 'livePowerChart',
+    minMaxAvgDatasets(powerBuckets.min, powerBuckets.max, powerBuckets.avg, color('--power-line')),
+    baseLineOptions('W'));
+
+  const cpuOptions = baseLineOptions('%');
+  const cpuBuckets = bucketize(liveCpuRaw, LIVE_BUCKET_MS);
+  liveCpuChart = upsertChart(liveCpuChart, 'liveCpuChart',
+    minMaxAvgDatasets(cpuBuckets.min, cpuBuckets.max, cpuBuckets.avg, color('--cpu-line')),
     { ...cpuOptions, scales: { ...cpuOptions.scales, y: { ...cpuOptions.scales.y, min: 0 } } });
 }
 
@@ -389,7 +447,7 @@ document.getElementById('rangePicker').addEventListener('click', (e) => {
   currentRange = btn.dataset.range;
   customFrom = customUntil = null;
   document.getElementById('customFrom').value = '';
-  document.getElementById('customUntil').value = '';
+  document.getElementById('customUntil').value = nowForDatetimeLocal();
   loadCharts();
   loadBreakdown();
 });
@@ -587,12 +645,13 @@ document.getElementById('localeSwitcher').addEventListener('change', async (e) =
 async function main() {
   await i18n.init();
   document.getElementById('localeSwitcher').value = i18n.locale;
+  document.getElementById('customUntil').value = nowForDatetimeLocal();
 
   linkChartsHover(document.getElementById('powerChart'), () => powerChart, document.getElementById('cpuChart'), () => cpuChart);
   linkChartsHover(document.getElementById('livePowerChart'), () => livePowerChart, document.getElementById('liveCpuChart'), () => liveCpuChart);
 
   loadAll();
-  setInterval(loadKpis, 30000); // "current power" KPI + freshness pulse
-  setInterval(loadLive, 2000); // matches the wattmeter's ~2s publish interval
+  setInterval(loadKpis, 30000); // cost/price summary
+  setInterval(loadLive, 2000); // matches the wattmeter's ~2s publish interval; also drives "Current power" + its pulse
 }
 main();

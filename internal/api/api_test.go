@@ -179,6 +179,30 @@ func TestPowerLiveReturnsRecentRawSamplesOnly(t *testing.T) {
 	}
 }
 
+func TestPowerLiveSinceParamReturnsOnlyNewerSamples(t *testing.T) {
+	db, h := newTestServer(t)
+	now := time.Now().Unix()
+	db.Exec(`INSERT INTO power_samples (ts, watts, cumulative_kwh, voltage, current) VALUES (?, ?, ?, ?, ?)`, now-10, 40.0, 1.0, 230.0, 0.17)
+	db.Exec(`INSERT INTO power_samples (ts, watts, cumulative_kwh, voltage, current) VALUES (?, ?, ?, ?, ?)`, now-2, 50.0, 1.0, 230.0, 0.22)
+	db.Exec(`INSERT INTO host_cpu_samples (ts, cpu_pct) VALUES (?, ?)`, now-10, 5.0)
+	db.Exec(`INSERT INTO host_cpu_samples (ts, cpu_pct) VALUES (?, ?)`, now-2, 6.0)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/live?power_since=%d&cpu_since=%d", now-10, now-10), nil)
+	h.ServeHTTP(rec, req)
+
+	var resp liveResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Power) != 1 || resp.Power[0].Value != 50.0 {
+		t.Errorf("power = %+v, want only the sample strictly newer than power_since", resp.Power)
+	}
+	if len(resp.Cpu) != 1 || resp.Cpu[0].Value != 6.0 {
+		t.Errorf("cpu = %+v, want only the sample strictly newer than cpu_since", resp.Cpu)
+	}
+}
+
 func TestPricingPeriodsCrudAndOverlapRejection(t *testing.T) {
 	_, h := newTestServer(t)
 
