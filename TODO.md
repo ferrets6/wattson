@@ -110,8 +110,6 @@ binding decisions.
   hourly). Not addressed yet — revisit spacing/collapsing once it's been
   seen on a real phone (see the "Open" testing note below).
 
-## Done (continued)
-
 - **Custom date range + zoom on the hourly charts** (2026-09-19): two date
   inputs next to the preset buttons override the range entirely (an empty
   "until" defaults to now); picking a preset clears them back. Zoom/pan use
@@ -122,13 +120,17 @@ binding decisions.
   hover-sync), plus a "Reset zoom" button. Verified in the browser: wheel
   zoom, cross-chart sync, reset, and preset/custom switching all work.
 
-## Open
+- **Beszel 1m retention checked (2026-09-19)**: confirmed via the Beszel UI
+  at 1 hour. Wattson polls Beszel every 30s (`beszel.Config.PollInterval`
+  default, `internal/beszel/client.go:38`), so as long as Wattson itself is
+  down for less than an hour, no CPU/RAM data is lost at full granularity —
+  the next poll always lands well inside Beszel's own 1m window. A Wattson
+  outage longer than that would permanently lose 1-minute detail for the
+  part beyond the hour (Beszel would have already rolled it up to 10m by
+  the time Wattson polls again), though coarser data would still exist.
+  No action needed at Wattson's current poll interval.
 
-- Observe Beszel's real raw (`1m`) retention in practice (it already does
-  its own internal rollup at 1m/10m/20m/120m/480m) — i.e. confirm how far
-  back `resource_samples` at 1-minute granularity actually stays queryable
-  on the Beszel side before Wattson's own poll would see gaps. Not started;
-  low priority.
+## Open
 - **Idle baseline calibration (2026-09-19, calculated from real data)**:
   ran the same 10th-percentile calculation `rollup.baselineWatts` uses
   against the local dev DB's real backfilled `power_hourly` data. Only 57
@@ -142,3 +144,49 @@ binding decisions.
   defeat the point of the dynamic calculation. Revisit once a full 7-day
   window has accumulated (around 2026-09-23) and recheck against a fixed
   32 W idea only if the dynamic value still looks off.
+
+### Data granularity + chart rework (2026-09-20, requested by the user)
+
+- **Increase data granularity** — two parts, not started:
+  - **1.1 Live view at 2s resolution**: both power and CPU, for the last
+    hour. Needs evaluation on both ends: the Tasmota "Sonoff Dual Meter"
+    publishes `tele/tasmota/SENSOR` roughly every ~10s today (a
+    `TelePeriod` change would be needed on the device itself, not in
+    Wattson); Beszel's own finest resolution is 1m (see the retention note
+    above) — its agent's own poll interval would need lowering, if that's
+    even configurable, or Wattson would need to poll Beszel's *live* stats
+    endpoint (if one exists) rather than its stored `1m` stats. Needs
+    research on both the Tasmota and Beszel side before any Wattson code
+    changes — don't assume either is a simple config flip. Once live data
+    actually arrives at ~2s, the "Current power" freshness pulse dot
+    should keep flashing correctly at that rate too (it already flashes on
+    every genuinely new `ts`, not on a fixed timer — just needs to be
+    re-verified once the faster feed is real, not re-implemented).
+  - **1.2 A full week at 1-minute resolution**: today `power_hourly`/
+    `resource_hourly` are the only long-term rollup (1 row/hour), which is
+    too coarse for a "last 7 days" view. Would need a second rollup tier
+    (e.g. `power_1m`/`resource_1m`, pruned after 7-8 days) sitting between
+    the raw tables (short retention) and the existing hourly one (kept
+    forever) — same idea as Beszel's own multi-tier rollup.
+  - **Before implementing either**: estimate the storage impact of the new
+    tables over the project's 10-year retention horizon. Not expected to
+    be significant (SQLite, same order of magnitude as today), but size it
+    with real row-size numbers before committing to the schema, per
+    CLAUDE.md's own "SQLite, not Postgres" sizing assumption.
+- **Charts should show min/max/avg for the period**, not just a single
+  averaged line — reference: the "NAS" statistics-graph card on the user's
+  Home Assistant dashboard (a private LAN URL, not reachable to check
+  directly; the reference is Home Assistant's built-in "statistics graph"
+  card, which bands min/mean/max per bucket). `power_hourly` already
+  stores `watts_min`/`watts_max`/`watts_avg` per bucket — this is mostly a
+  frontend rework (min/max as a shaded band or two thin lines around the
+  average) rather than a backend change, except for the CPU chart, which
+  would need `resource_hourly` to gain `cpu_min`/`cpu_max` columns (today
+  it only has `cpu_avg`). Not started.
+- **Live chart "blinks" on every refresh**: `loadLive()` destroys and
+  recreates the chart from scratch every 10s poll, so it visibly empties
+  and refills instead of scrolling smoothly like a normal live chart.
+  Fix: keep the `Chart` instance alive across polls and update its
+  dataset's data array + call `chart.update()` (or append only the new
+  points and shift old ones out of the sliding window), instead of
+  `destroy()`/`new Chart()` each time. Not started.
