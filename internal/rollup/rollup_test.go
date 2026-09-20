@@ -32,7 +32,8 @@ func TestRollupBucketAggregatesPowerAndResources(t *testing.T) {
 
 	insertResourceSample(t, db, bucketStart+60, "immich_server", 40.0)
 	insertResourceSample(t, db, bucketStart+60, "beszel", 1.0)
-	insertResourceSample(t, db, bucketStart+60, "__host__", 5.0)
+	insertResourceSample(t, db, bucketStart+60, "__host__", 3.0)
+	insertResourceSample(t, db, bucketStart+600, "__host__", 7.0)
 
 	cfg := Config{FixedBaselineWatts: floatPtr(50), Attribution: attribution.Config{
 		Containers:      map[string]attribution.ContainerEntry{"immich_server": {Category: attribution.CategoryUser}},
@@ -55,12 +56,12 @@ func TestRollupBucketAggregatesPowerAndResources(t *testing.T) {
 		t.Errorf("kwh = %v, want 0.10", kwh)
 	}
 
-	var hostCpu float64
-	if err := db.QueryRow(`SELECT cpu_avg FROM resource_hourly WHERE bucket_start = ? AND container = '__host__'`, bucketStart).Scan(&hostCpu); err != nil {
+	var hostCpuAvg, hostCpuMin, hostCpuMax float64
+	if err := db.QueryRow(`SELECT cpu_avg, cpu_min, cpu_max FROM resource_hourly WHERE bucket_start = ? AND container = '__host__'`, bucketStart).Scan(&hostCpuAvg, &hostCpuMin, &hostCpuMax); err != nil {
 		t.Fatalf("resource_hourly host: %v", err)
 	}
-	if hostCpu != 5.0 {
-		t.Errorf("host cpu_avg = %v, want 5.0", hostCpu)
+	if hostCpuAvg != 5.0 || hostCpuMin != 3.0 || hostCpuMax != 7.0 {
+		t.Errorf("host cpu avg/min/max = %v/%v/%v, want 5.0/3.0/7.0", hostCpuAvg, hostCpuMin, hostCpuMax)
 	}
 
 	rows, err := db.Query(`SELECT container, category, watts_allocated FROM attribution_buckets WHERE bucket_start = ?`, bucketStart)

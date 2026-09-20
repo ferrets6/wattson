@@ -151,6 +151,25 @@ binding decisions.
   charts are now updated in place rather than recreated, so the locale
   switch handler explicitly tears them down once to pick up the new
   format).
+- **Charts show min/max/avg for the period (done 2026-09-20)**: reference
+  was the "NAS" statistics-graph card on the user's Home Assistant
+  dashboard. `power_hourly` already had `watts_min`/`watts_max`; added the
+  same to `resource_hourly` (`cpu_min`/`cpu_max`, migration
+  `0002_resource_hourly_cpu_minmax.sql`, nullable — existing rows predate
+  it) and `rollup.rollupResources` now computes `MIN`/`MAX(cpu_pct)`
+  alongside the average. `GET /power/history` returns `cpu_min_pct`/
+  `cpu_max_pct` (falling back to `cpu_avg_pct` via `COALESCE` when a bucket
+  has no resource data at all, so an empty band doesn't disagree with a
+  nonzero-looking average). Frontend: both hourly charts now render a
+  three-dataset trio (min/max/avg) via `minMaxAvgDatasets()` — min is an
+  invisible boundary, max fills back to it (`fill: '-1'`) for the shaded
+  band, avg draws solid on top — with a caption explaining the band.
+  `linkChartsHover`'s crosshair sync was generalized to track whichever
+  dataset is *last* in the array (the average) instead of assuming index
+  0, so it keeps working for both the 3-dataset historical charts and the
+  single-dataset live ones. Verified in the browser: band + line render
+  correctly, tooltip shows Min/Max/Media together, hover-sync and zoom-sync
+  between the power/CPU pair still work with the new dataset count.
 
 ## Open
 - **Idle baseline calibration (2026-09-19, calculated from real data)**:
@@ -195,13 +214,3 @@ binding decisions.
     be significant (SQLite, same order of magnitude as today), but size it
     with real row-size numbers before committing to the schema, per
     CLAUDE.md's own "SQLite, not Postgres" sizing assumption.
-- **Charts should show min/max/avg for the period**, not just a single
-  averaged line — reference: the "NAS" statistics-graph card on the user's
-  Home Assistant dashboard (a private LAN URL, not reachable to check
-  directly; the reference is Home Assistant's built-in "statistics graph"
-  card, which bands min/mean/max per bucket). `power_hourly` already
-  stores `watts_min`/`watts_max`/`watts_avg` per bucket — this is mostly a
-  frontend rework (min/max as a shaded band or two thin lines around the
-  average) rather than a backend change, except for the CPU chart, which
-  would need `resource_hourly` to gain `cpu_min`/`cpu_max` columns (today
-  it only has `cpu_avg`). Not started.
