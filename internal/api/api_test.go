@@ -158,10 +158,8 @@ func TestPowerLiveReturnsRecentRawSamplesOnly(t *testing.T) {
 		now-60, 40.0, 1.0, 230.0, 0.17) // inside the 15-minute window
 	db.Exec(`INSERT INTO power_samples (ts, watts, cumulative_kwh, voltage, current) VALUES (?, ?, ?, ?, ?)`,
 		now-3600, 99.0, 2.0, 230.0, 0.43) // an hour old, outside the window
-	db.Exec(`INSERT INTO resource_samples (ts, container, cpu_pct, mem_used, net_sent_bytes, net_recv_bytes) VALUES (?, '__host__', ?, ?, ?, ?)`,
-		now-60, 12.5, 1.0, 0, 0)
-	db.Exec(`INSERT INTO resource_samples (ts, container, cpu_pct, mem_used, net_sent_bytes, net_recv_bytes) VALUES (?, 'jellyfin', ?, ?, ?, ?)`,
-		now-60, 80.0, 1.0, 0, 0) // a container, not the host: must not leak into the cpu series
+	db.Exec(`INSERT INTO host_cpu_samples (ts, cpu_pct) VALUES (?, ?)`, now-60, 12.5)   // inside the window
+	db.Exec(`INSERT INTO host_cpu_samples (ts, cpu_pct) VALUES (?, ?)`, now-3600, 99.0) // an hour old, outside the window
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/power/live", nil))

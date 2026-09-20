@@ -82,13 +82,16 @@ binding decisions.
   "system" total matches the sum of the container rows; both the category
   and pricing-periods tables now scroll horizontally on narrow screens
   instead of overflowing the page.
-- **Live raw chart** (2026-09-19): a new "Live (last 15 min)" section with
-  two synced charts (power W, host CPU %) above the hourly ones. New
-  `GET /api/v1/power/live` returns raw `power_samples`/`resource_samples`
-  (the two series aren't timestamp-aligned — MQTT and Beszel poll
-  independently — so each is charted on its own shared time axis rather
-  than by matching index), polled every 10s to match the wattmeter's
-  publish interval. **Design decision**: a single chart with power and CPU
+- **Live raw chart** (2026-09-19, CPU source superseded 2026-09-20 — see
+  the "reversed" entry further down: the live CPU series now reads from
+  `host_cpu_samples`/`internal/hostcpu`, not `resource_samples`/Beszel):
+  a new "Live (last 15 min)" section with two synced charts (power W, host
+  CPU %) above the hourly ones. New `GET /api/v1/power/live` returns raw
+  `power_samples`/`resource_samples` (the two series aren't timestamp-
+  aligned — MQTT and Beszel poll independently — so each is charted on its
+  own shared time axis rather than by matching index), polled every 10s to
+  match the wattmeter's publish interval (also since lowered to 2s, see
+  below). **Design decision**: a single chart with power and CPU
   sharing one y-axis would either need a second axis — the dataviz skill
   rules out dual-axis charts, since two independently-scaled series on one
   plot invite false "look, they move together" readings — or normalizing
@@ -225,13 +228,39 @@ binding decisions.
       correctly at that rate too — it already flashes on every genuinely
       new `ts`, not on a fixed timer, so this just needs re-verifying,
       not re-implementing.
-    - **Decision (2026-09-20)**: power at 2s (Tasmota `TelePeriod`, user's
-      own task, see above), CPU stays at Beszel's natural ~1-minute pace
-      — no direct host-CPU reading added (would need a `/proc` mount into
-      Wattson's container, a deploy-level change, just to make the live
-      chart's CPU line look busier; not worth it unless the 1-minute
-      stepped CPU line actually bothers when seen next to a jittery 2s
-      power line). Revisit only if that turns out to look bad in practice.
+    - **Reversed (2026-09-20): live CPU now reads directly from `/proc`,
+      done.** The 1-minute-stepped CPU line next to 2s power did look bad
+      in practice once actually seen, so built it: new `internal/hostcpu`
+      package reads `/proc/stat` (first-line `cpu` counters), computes
+      utilization from the delta between two reads (`idle+iowait` vs
+      total jiffies), and `hostcpu.Start` samples it every 2s into a new
+      `host_cpu_samples` table (migration `0004_host_cpu_samples.sql`,
+      same 7-day retention as the other raw tables, pruned from
+      `rollup.pruneRaw`). `GET /power/live`'s `cpu` series now reads from
+      `host_cpu_samples` instead of Beszel's `resource_samples` — **only
+      the live view changed**; `/power/history`'s hourly/minutely CPU
+      charts still come exclusively from Beszel, unchanged, since that's
+      still what the per-container attribution heuristic needs and 1-min
+      resolution was never the complaint there.
+      No docker-compose/mount change turned out to be needed: Docker
+      containers see the *host's* `/proc/stat` by default (CPU counters
+      aren't namespaced the way cgroup limits are) unless a proc-
+      virtualizing runtime like LXCFS is in play — verified the read/parse
+      logic with `hostcpu_test.go` (fake stat files, includes an
+      iowait-not-counted-as-busy case and a missing-file/gap-recovery
+      case) and end-to-end locally against a fake `/proc/stat` (via the
+      `HOSTCPU_PROC_STAT_PATH` override, since this dev machine is
+      Windows and has no real one): fed it a monotonically increasing
+      counter over several 2s ticks and confirmed `/power/live` returned
+      exactly the expected utilization percentage each time, then watched
+      the live CPU chart move in the browser instead of sitting flat.
+      **Not yet confirmed on the actual NAS** — the "Docker exposes the
+      host's /proc/stat by default" assumption is standard behavior but
+      untested on this specific homelab; if the live CPU line comes back
+      flat at 0 or errors in the container logs after deploy, that
+      assumption is the first thing to check (fall back to bind-mounting
+      `/proc:/host/proc:ro` and setting `HOSTCPU_PROC_STAT_PATH=/host/proc/stat`
+      in the `homelab` repo's `docker-compose.yml`).
     - **What actually needs to change once Tasmota publishes at 2s**:
       confirmed the raw ingestion path is already interval-agnostic —
       `mqtt.Collector.handleMessage` inserts every message it receives, no

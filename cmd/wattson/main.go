@@ -19,6 +19,7 @@ import (
 	"github.com/ferrets6/wattson/internal/auth"
 	"github.com/ferrets6/wattson/internal/beszel"
 	"github.com/ferrets6/wattson/internal/homeassistant"
+	"github.com/ferrets6/wattson/internal/hostcpu"
 	"github.com/ferrets6/wattson/internal/mqtt"
 	"github.com/ferrets6/wattson/internal/rollup"
 	"github.com/ferrets6/wattson/internal/store"
@@ -56,6 +57,8 @@ func main() {
 		AdminPassword: getenv("BESZEL_ADMIN_PASSWORD", ""),
 	})
 	go beszelClient.Start(ctx)
+
+	go hostcpu.Start(ctx, db, 2*time.Second)
 
 	haClient := homeassistant.New(db, homeassistant.Config{
 		URL:         getenv("HA_URL", ""),

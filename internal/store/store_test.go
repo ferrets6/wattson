@@ -16,6 +16,7 @@ func TestOpenAppliesMigrationsAndIsIdempotent(t *testing.T) {
 	tables := []string{
 		"power_samples", "power_hourly", "power_minutely",
 		"resource_samples", "resource_hourly", "resource_minutely",
+		"host_cpu_samples",
 		"attribution_buckets", "pricing_periods", "pun_prices",
 	}
 	for _, tbl := range tables {

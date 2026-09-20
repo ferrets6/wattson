@@ -391,6 +391,12 @@ func pruneRaw(db *sql.DB, retention time.Duration) error {
 	if _, err := db.Exec(`DELETE FROM resource_samples WHERE ts < ?`, cutoff); err != nil {
 		return err
 	}
+	// host_cpu_samples is written by internal/hostcpu, not this package, but
+	// shares the same short-retention raw-table convention, so it's pruned
+	// from the same pass rather than needing its own job.
+	if _, err := db.Exec(`DELETE FROM host_cpu_samples WHERE ts < ?`, cutoff); err != nil {
+		return err
+	}
 	return nil
 }
 
