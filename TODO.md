@@ -190,3 +190,16 @@ binding decisions.
   dataset's data array + call `chart.update()` (or append only the new
   points and shift old ones out of the sliding window), instead of
   `destroy()`/`new Chart()` each time. Not started.
+- **12h vs 24h time format**: there's no browser API that exposes the OS's
+  actual clock-format preference (that's deliberately not exposed, a
+  fingerprinting concern) — the closest thing is
+  `Intl.DateTimeFormat(locale).resolvedOptions().hourCycle`, which infers
+  it from the *locale's convention* (e.g. `it-IT` → 24h, `en-US` → 12h),
+  not the user's own OS override. Times are currently formatted via
+  `toLocaleString(i18n.intlTag())` (chart tooltips) and
+  `toLocaleDateString(...)` (month label) without an explicit `hour12`/
+  `hourCycle`, so they already follow locale convention by default. At
+  minimum, explicitly force 24h for the Italian locale (`it-IT` already
+  defaults to 24h in every browser tested, but pin it rather than rely on
+  an assumption) and use `resolvedOptions().hourCycle` as the "automatic"
+  signal for English rather than hardcoding 12h. Not started.
