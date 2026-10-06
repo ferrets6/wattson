@@ -27,15 +27,6 @@ import (
 	"github.com/ferrets6/wattson/internal/store"
 )
 
-// Tasmota entities (line 1) used to reconstruct power_samples. Names
-// confirmed via /api/states on this installation (see CLAUDE.md).
-const (
-	entityPower   = "sensor.<device>_energy_power_0"
-	entityCurrent = "sensor.<device>_energy_current_0"
-	entityVoltage = "sensor.<device>_energy_voltage"
-	entityTotal   = "sensor.<device>_energy_total_0"
-)
-
 func main() {
 	sinceFlag := flag.String("since", "2026-09-16T00:00:00Z", "backfill from this instant (RFC3339). Default: when the Tasmota was last restarted, the earliest useful data point in HA")
 	beszelResolution := flag.String("beszel-resolution", "10m", "Beszel resolution to read (1m/10m/20m/120m/480m): 1m typically doesn't cover more than a few hours")
@@ -97,10 +88,17 @@ func backfillPower(ctx context.Context, db *sql.DB, since time.Time) (int64, err
 		PunEntityID: getenv("HA_PUN_ENTITY_ID", ""),
 		HTTPTimeout: 2 * time.Minute, // multi-day history across 4 entities: slower than live polling
 	}
-	if cfg.URL == "" || cfg.Token == "" {
-		return 0, fmt.Errorf("HA_URL/HA_TOKEN not configured")
+	prefix := getenv("HA_TASMOTA_ENTITY_PREFIX", "")
+	if cfg.URL == "" || cfg.Token == "" || prefix == "" {
+		return 0, fmt.Errorf("HA_URL/HA_TOKEN/HA_TASMOTA_ENTITY_PREFIX not configured")
 	}
 	client := homeassistant.New(db, cfg)
+
+	// Tasmota line-1 entities used to reconstruct power_samples.
+	entityPower := prefix + "_power_0"
+	entityCurrent := prefix + "_current_0"
+	entityVoltage := prefix + "_voltage"
+	entityTotal := prefix + "_total_0"
 
 	history, err := client.FetchHistory(ctx, []string{entityPower, entityCurrent, entityVoltage, entityTotal}, since)
 	if err != nil {

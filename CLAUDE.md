@@ -7,12 +7,9 @@ heuristic, computes the cost in euros with a configurable PUN+spread
 pricing model with period overrides, and exposes all of it via a REST API +
 an SPA frontend served by the same binary/container.
 
-**Not a standalone project**: it's meant to be consumed by the `homelab`
-repo (separate repo, `<private deploy repo>`) with the same
-pattern already used for `hp-bios-webui`: Docker build from a **Git context
-pinned to a commit SHA** (no ghcr publishing, no CI to maintain). The
-homelab repo does NOT contain Wattson's code, only the `docker-compose.yml`
-that builds it from here.
+Deployed with the same pattern as `hp-bios-webui`: a Docker build from a
+**Git context pinned to a commit SHA** (no ghcr publishing, no CI to
+maintain).
 
 See `PLAN.md` for the full architecture and `TODO.md` for implementation
 order/status. This file gets updated when the scope changes durably (not
@@ -20,7 +17,7 @@ for progress status — that lives in `TODO.md`).
 
 ## Why it exists
 
-The homelab repo currently has no real power consumption data: Beszel
+The NAS has no real power consumption data otherwise: Beszel
 covers CPU/RAM/disk/network/ZFS but not watts. The goal is to see real
 consumption over time, correlated to what's causing it, with the cost in
 euros computed from a price that can be automatic or manually overridden
@@ -30,18 +27,14 @@ for specific periods (including future ones, with an expiry).
 
 - Custom service, not Grafana+Prometheus (RAM, UX, live price editing).
 - Power ingestion via **MQTT subscription**, not HTTP polling of the
-  Tasmota. The wattmeter (`http://tasmota.example.lan`, Tasmota "Sonoff Dual
-  Meter") already publishes telemetry every ~10s to a Mosquitto broker
-  (`mosquitto` container on `the broker host`, where Home Assistant also runs
-  in a separate container), reachable on the LAN at `mqtt.example.lan:1883`
-  (same host also exposed as `homeassistant.example.lan:8123` for HA). **Managed
-  outside this repo and outside homelab**. Wattson uses a dedicated
-  Mosquitto user with a read-only ACL on the single topic
-  `tele/tasmota/SENSOR` (confirmed, verified end-to-end). **Note**:
-  Mosquitto's ACL is global for the instance — any user not listed in the
-  ACL file loses all access as soon as the ACL is active (this happened
-  once already: `<ha-user>`, shared by HA and the Tasmota itself, must always
-  be listed in the ACL with full access). Use only **line 1**
+  Tasmota. The wattmeter (a Tasmota "Sonoff Dual Meter") already publishes
+  telemetry every ~10s to a Mosquitto broker on the LAN (managed outside
+  this repo). Wattson uses a dedicated Mosquitto user with a read-only ACL
+  on the single telemetry topic; broker address, user, and topic come from
+  `.env`. **Note**: Mosquitto's ACL is global for the instance — any user
+  not listed in the ACL file loses all access as soon as the ACL is active,
+  so the users HA and the Tasmota connect with must stay listed with full
+  access. Use only **line 1**
   (`ENERGY.Power[0]`, `Total[0]`, `Voltage`, `Current[0]`) — line 2 is a
   different load, ignore it.
 - **PUN**: no GME scraping in Go. Read the value from a Home Assistant
@@ -87,9 +80,11 @@ for specific periods (including future ones, with an expiry).
 
 - Real credentials/host/topic for Home Assistant's MQTT broker.
 - Home Assistant API long-lived token for reading `pun_sensor`.
-- Beszel admin credentials (`BESZEL_ADMIN_EMAIL`/`PASSWORD`, already
-  existing in the homelab repo's `.env` — only copied
-  into Wattson's `.env`, never regenerated).
+- Beszel admin credentials (`BESZEL_ADMIN_EMAIL`/`PASSWORD`, the existing
+  Beszel instance's ones — only copied into Wattson's `.env`, never
+  regenerated).
+- Network addresses, ports, MQTT user/topic, HA entity IDs of the real
+  setup: `.env` only. Code comments and `.env.example` use placeholders.
 
 All of these go in `.env` (gitignored), never in plain text in code or commits.
 
@@ -97,8 +92,7 @@ All of these go in `.env` (gitignored), never in plain text in code or commits.
 
 - No secrets in the repo: `.env` gitignored, `.env.example` documented.
 - No `latest` tags for base Docker dependencies in the `Dockerfile`.
-- The container runs on the homelab repo's `edge` network, no host port
-  published: reachable only via Caddy (`lan-only` + SSO, like Beszel).
+- The container publishes no host port: reachable only via the reverse
+  proxy (LAN-only + SSO).
 - If a design decision gets reversed, update `PLAN.md` and this file — don't
-  let them describe an architecture that no longer exists (same rule as
-  the homelab repo).
+  let them describe an architecture that no longer exists.

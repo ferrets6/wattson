@@ -6,7 +6,7 @@ See `CLAUDE.md` for scope and binding decisions. This file covers technical deta
 
 ### 1. MQTT collector — `internal/mqtt`
 
-`eclipse/paho.mqtt.golang`, subscribed to `tele/tasmota/SENSOR`. Payload:
+`eclipse/paho.mqtt.golang`, subscribed to the Tasmota's `tele/<topic>/SENSOR` (`MQTT_TOPIC`). Payload:
 
 ```json
 {"Time":"...","ENERGY":{"Total":[2.694,0.240],"Power":[69,5],
@@ -170,18 +170,6 @@ Sections:
 
 Palette and mark spec from the `dataviz` skill's reference palette,
 validated with `validate_palette.js` in both light and dark mode.
-
-## Homelab repo integration (done from that repo, not this one)
-
-- `services/wattson/docker-compose.yml`, following
-  `services/hp-bios-webui/docker-compose.yml`'s pattern: `build.context` = a
-  Git URL pinned to a commit SHA of this repo, `edge` network, data on
-  `/data/wattson`.
-- Caddy block `wattson.example.lan` with `lan-only` + `sso`.
-- Homepage `customapi` card on `/api/v1/power/summary`.
-- Uptime Kuma monitor.
-- `docs/new-service.md` checklist: ZFS dataset + sanoid + backup, entries in
-  `docs/services.md`, `docs/data-map.md`, `docs/decisions.md`.
 
 ## Open items
 
