@@ -35,7 +35,12 @@ func TestRollupBucketAggregatesPowerAndResources(t *testing.T) {
 	insertResourceSample(t, db, bucketStart+60, "__host__", 3.0)
 	insertResourceSample(t, db, bucketStart+600, "__host__", 7.0)
 
-	cfg := Config{FixedBaselineWatts: floatPtr(50), Attribution: attribution.Config{
+	// Ten earlier 50 W hours make the dynamic baseline (10th percentile) 50 W.
+	for k := int64(1); k <= 10; k++ {
+		db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, 50, 50, 50, 0.05, 230, 1, 1)`, bucketStart-k*3600)
+	}
+
+	cfg := Config{BaselineWindow: 24 * time.Hour, BaselinePercentile: 0.1, Attribution: attribution.Config{
 		Containers:      map[string]attribution.ContainerEntry{"immich_server": {Category: attribution.CategoryUser}},
 		DefaultCategory: attribution.CategoryUnknown,
 	}}
@@ -117,7 +122,7 @@ func TestRollupBucketNoDataIsANoop(t *testing.T) {
 	db := newTestDB(t)
 	bucketStart := floorToHour(time.Now().Add(-2 * time.Hour).Unix())
 
-	if err := rollupBucket(db, Config{FixedBaselineWatts: floatPtr(0)}, bucketStart); err != nil {
+	if err := rollupBucket(db, Config{}, bucketStart); err != nil {
 		t.Fatalf("rollupBucket on an empty bucket should not fail: %v", err)
 	}
 
@@ -134,7 +139,7 @@ func TestPendingBucketsAdvancesEvenThroughGaps(t *testing.T) {
 	base := floorToHour(time.Now().Add(-5 * time.Hour).Unix())
 	insertPowerSample(t, db, base+60, 100, 1.0) // only the first hour has data, the rest is a "gap"
 
-	cfg := Config{FixedBaselineWatts: floatPtr(0)}
+	cfg := Config{}
 	cfg.applyDefaults()
 
 	RunOnce(db, cfg)
@@ -152,18 +157,6 @@ func TestPendingBucketsAdvancesEvenThroughGaps(t *testing.T) {
 	db.QueryRow(`SELECT COUNT(*) FROM power_hourly`).Scan(&n)
 	if n != 1 {
 		t.Errorf("expected exactly 1 power_hourly row (the other hours were empty), got %d", n)
-	}
-}
-
-func TestBaselineWattsFixedOverride(t *testing.T) {
-	db := newTestDB(t)
-	fixed := 42.0
-	b, err := baselineWatts(db, Config{FixedBaselineWatts: &fixed})
-	if err != nil {
-		t.Fatalf("baselineWatts: %v", err)
-	}
-	if b != 42.0 {
-		t.Errorf("baseline = %v, want 42.0", b)
 	}
 }
 
@@ -209,7 +202,6 @@ func TestPruneMinutelyDeletesOnlyPastRetention(t *testing.T) {
 	}
 }
 
-func floatPtr(f float64) *float64 { return &f }
 
 func insertPowerSample(t *testing.T, db *sql.DB, ts int64, watts, cumulativeKwh float64) {
 	t.Helper()
@@ -224,5 +216,34 @@ func insertResourceSample(t *testing.T, db *sql.DB, ts int64, container string, 
 	if _, err := db.Exec(`INSERT INTO resource_samples (ts, container, cpu_pct, mem_used, net_sent_bytes, net_recv_bytes, disk_io_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		ts, container, cpuPct, 100.0, 0.0, 0.0, nil); err != nil {
 		t.Fatalf("insert resource_samples: %v", err)
+	}
+}
+
+func TestRollupBucketReusesHourlyPowerWhenRawIsPruned(t *testing.T) {
+	db := newTestDB(t)
+	bucketStart := floorToHour(time.Now().Add(-10 * 24 * time.Hour).Unix())
+
+	// Raw power long gone, hourly row kept; resource history just backfilled.
+	db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, 80, 70, 90, 0.08, 230, 1, 360)`, bucketStart)
+	insertResourceSample(t, db, bucketStart+600, "__host__", 12.0)
+	insertResourceSample(t, db, bucketStart+600, "immich_server", 30.0)
+
+	if err := rollupBucket(db, Config{}, bucketStart); err != nil {
+		t.Fatalf("rollupBucket: %v", err)
+	}
+
+	var cpu float64
+	if err := db.QueryRow(`SELECT cpu_avg FROM resource_hourly WHERE bucket_start = ? AND container = '__host__'`, bucketStart).Scan(&cpu); err != nil || cpu != 12.0 {
+		t.Errorf("host cpu = %v (err %v), want 12.0", cpu, err)
+	}
+	var watts float64
+	db.QueryRow(`SELECT watts_avg FROM power_hourly WHERE bucket_start = ?`, bucketStart).Scan(&watts)
+	if watts != 80 {
+		t.Errorf("power_hourly overwritten: watts_avg = %v, want 80", watts)
+	}
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM attribution_buckets WHERE bucket_start = ?`, bucketStart).Scan(&n)
+	if n == 0 {
+		t.Error("expected attribution rows recomputed from the hourly power")
 	}
 }

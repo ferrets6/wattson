@@ -89,6 +89,14 @@ func (c *Client) pollOnce(ctx context.Context) {
 		log.Println("beszel: reading systems failed:", err)
 		return
 	}
+	// An expired token doesn't always get a 401: PocketBase answers 200 with
+	// an empty list when the list rule no longer matches. Without this,
+	// polling silently stopped until the next restart.
+	if len(systems) == 0 {
+		c.token = ""
+		log.Println("beszel: no systems visible, re-logging in next cycle")
+		return
+	}
 
 	now := time.Now().Unix()
 	for _, sys := range systems {

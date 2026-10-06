@@ -107,3 +107,30 @@ func TestPollOnceWritesHostAndContainerSamples(t *testing.T) {
 		t.Errorf("wrong container sample: %+v", beszel)
 	}
 }
+
+func TestPollOnceRelogsInWhenSystemsListComesBackEmpty(t *testing.T) {
+	logins := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/collections/_superusers/auth-with-password", func(w http.ResponseWriter, r *http.Request) {
+		logins++
+		json.NewEncoder(w).Encode(map[string]string{"token": "tok"})
+	})
+	mux.HandleFunc("/api/collections/systems/records", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"items": []any{}}) // expired token: 200 + empty
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+
+	c := New(db, Config{URL: srv.URL, AdminEmail: "a@a.it", AdminPassword: "pw"})
+	c.pollOnce(context.Background())
+	c.pollOnce(context.Background())
+	if logins != 2 {
+		t.Errorf("logins = %d, want 2 (empty list must force a fresh login)", logins)
+	}
+}
