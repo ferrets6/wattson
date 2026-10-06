@@ -13,29 +13,21 @@ const CATEGORY_COLORS = {
 const categoryLabel = (c) => i18n.t(`category.${c}`) || c;
 
 let currentRange = 'today';
-let customFrom = null, customUntil = null; // datetime-local strings, both set together or not at all
-let powerChart, cpuChart, categoryChart;
-let livePowerChart, liveCpuChart;
+let customRange = null; // {from, to} Dates from the range picker, or null
+let historyChart, costChart, categoryChart;
+let liveChart;
+let rangePicker;
 let lastPowerTs = null;
 
-// Formats "now" for a <input type="datetime-local"> value (local wall-clock time).
-function nowForDatetimeLocal() {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
-
-// A custom date range (from the two datetime-local inputs) takes over from
-// the presets entirely; clearing it falls back to the active preset. The
-// presets are rolling windows ending now, e.g. "Last 24h" is literally the
-// last 24 hours, not "since local midnight".
+// A custom range (from the range picker) takes over from the presets
+// entirely; picking a preset clears it. The presets are rolling windows
+// ending now, e.g. "Last 24h" is literally the last 24 hours, not "since
+// local midnight".
 function rangeToUnix() {
-  if (customFrom) {
-    const from = Math.floor(new Date(customFrom).getTime() / 1000);
-    const to = customUntil ? Math.floor(new Date(customUntil).getTime() / 1000) : Math.floor(Date.now() / 1000);
-    return { from, to };
-  }
   const now = Math.floor(Date.now() / 1000);
+  if (customRange) {
+    return { from: Math.floor(customRange.from.getTime() / 1000), to: Math.min(now, Math.floor(customRange.to.getTime() / 1000)) };
+  }
   const days = { today: 1, week: 7, month: 30 }[currentRange] ?? 1;
   return { from: now - days * 86400, to: now };
 }
@@ -56,7 +48,7 @@ function fmtWatts(v) {
   return `${Math.round(v)} W`;
 }
 function fmtKwh(v) {
-  return `${v.toFixed(2)} kWh`;
+  return `${v.toLocaleString(i18n.intlTag(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh`;
 }
 
 // --- KPI row -----------------------------------------------------------
@@ -116,24 +108,33 @@ function renderCurrentPrice(price) {
     sub.textContent = i18n.t('price.no_pun');
     return;
   }
-  el.textContent = `${price.eur_per_kwh.toFixed(4)} €/kWh`;
+  el.textContent = `${price.eur_per_kwh.toLocaleString(i18n.intlTag(), { minimumFractionDigits: 4, maximumFractionDigits: 4 })} €/kWh`;
   const sourceLabel = i18n.t(`price.source.${price.source}`) || price.source;
   sub.textContent = price.provisional ? i18n.t('price.provisional_suffix', { source: sourceLabel }) : sourceLabel;
 }
 
-// --- Power/energy charts -------------------------------------------------
+// --- Power/CPU and cost charts --------------------------------------------
 
-// [min, max, avg] trio for the shaded band: max fills back to min ('-1'),
-// avg draws on top. Order matters — linkChartsHover/syncZoomedRange always
-// treat the *last* dataset as the interactive one.
-function minMaxAvgDatasets(minData, maxData, avgData, lineColor) {
+// One series as a [min, max, avg] trio: max fills back to min ('-1') for
+// the shaded band, avg draws on top. Only avg (_avg) shows in the legend
+// and tooltip, with the band's min–max read from the two datasets before it.
+function seriesTrio(s, lineColor, yAxisID, label, unit) {
+  const base = { yAxisID, pointRadius: 0, _unit: unit };
   return [
-    { label: i18n.t('chart.min'), data: minData, borderWidth: 0, pointRadius: 0, fill: false },
-    { label: i18n.t('chart.max'), data: maxData, borderWidth: 0, pointRadius: 0, backgroundColor: hexToRgba(lineColor, 0.15), fill: '-1' },
+    { ...base, data: s.min, borderWidth: 0, fill: false },
+    { ...base, data: s.max, borderWidth: 0, backgroundColor: hexToRgba(lineColor, 0.12), fill: '-1' },
     {
-      label: i18n.t('chart.avg'), data: avgData, borderColor: lineColor, backgroundColor: hexToRgba(lineColor, 0.1),
-      borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, pointBackgroundColor: lineColor, fill: false, tension: 0.15,
+      ...base, _avg: true, label, data: s.avg, borderColor: lineColor, backgroundColor: lineColor,
+      borderWidth: 2, pointHoverRadius: 5, pointBackgroundColor: lineColor, fill: false, tension: 0.15,
     },
+  ];
+}
+
+// Power on the left axis (W), CPU on the right (%), same time axis.
+function powerCpuDatasets(power, cpu) {
+  return [
+    ...seriesTrio(power, color('--power-line'), 'y', i18n.t('chart.power'), 'W'),
+    ...seriesTrio(cpu, color('--cpu-line'), 'y1', i18n.t('chart.cpu'), '%'),
   ];
 }
 
@@ -148,141 +149,171 @@ function use24Hour() {
   }
 }
 
-// Mirrors a zoomed/panned x-axis range onto the paired chart (chart._pairChart).
-function syncZoomedRange(chart) {
-  const target = chart._pairChart;
-  if (!target) return;
-  target.options.scales.x.min = chart.scales.x.min;
-  target.options.scales.x.max = chart.scales.x.max;
-  target.update('none');
+// No fixed `unit`: Chart.js auto-picks it from the visible (possibly
+// zoomed) span, so ticks adapt when zooming in.
+function timeAxis() {
+  return {
+    type: 'time',
+    time: {
+      displayFormats: use24Hour()
+        ? { second: 'HH:mm:ss', minute: 'HH:mm', hour: 'HH:mm', day: 'MMM d' }
+        : { second: 'h:mm:ss a', minute: 'h:mm a', hour: 'h a', day: 'MMM d' },
+    },
+    grid: { color: color('--gridline'), drawTicks: false },
+    ticks: { color: color('--text-muted'), maxRotation: 0, autoSkipPadding: 24 },
+  };
 }
 
-// Deepest zoom allowed on a chart pair: below this span the minute-level
-// rollup has nothing more to show anyway, and zooming further just loses
-// context.
+// Always anchored at 0 (beginAtZero still extends below it if a reading
+// is ever negative, which would point at a data problem).
+function valueAxis(extra = {}) {
+  return {
+    beginAtZero: true,
+    grid: { color: color('--gridline'), drawTicks: false },
+    ticks: { color: color('--text-muted') },
+    border: { color: color('--baseline') },
+    ...extra,
+  };
+}
+
+const fmtNum = (v) => (v == null ? '–' : v.toLocaleString(i18n.intlTag(), { maximumFractionDigits: 1 }));
+
+// Deepest zoom allowed: below this span the minute-level rollup has
+// nothing more to show anyway.
 const MIN_ZOOM_RANGE_MS = 30 * 60 * 1000;
 
-// zoomable: wheel/pinch-zoom + drag-pan on the x axis, capped at
-// MIN_ZOOM_RANGE_MS. Not used on the live charts — they redraw every 2s,
-// so a zoom would get reset immediately.
-function baseLineOptions(unitLabel, zoomable = false) {
+// Mirrors the history chart's zoomed/panned x range onto the cost chart.
+function syncCostRange(chart) {
+  if (!costChart) return;
+  costChart.options.scales.x.min = chart.scales.x.min;
+  costChart.options.scales.x.max = chart.scales.x.max;
+  costChart.update('none');
+}
+
+// range: {from, to} in ms the x axis is pinned to. Zoom only on history:
+// the live chart redraws every 2s.
+function powerCpuOptions(range, zoomable) {
+  const x = timeAxis();
+  x.min = range.from;
+  x.max = range.to;
   return {
     responsive: true,
     maintainAspectRatio: false,
-    interaction: { mode: 'index', intersect: false },
+    interaction: { mode: 'nearest', axis: 'x', intersect: false },
     plugins: {
-      legend: { display: false }, // single series: the card title already names it
+      legend: {
+        align: 'end',
+        labels: {
+          color: color('--text-secondary'), boxWidth: 12, boxHeight: 2,
+          filter: (item, data) => data.datasets[item.datasetIndex]._avg,
+        },
+      },
       tooltip: {
+        filter: (item) => item.dataset._avg,
         callbacks: {
-          // dataset.label is set for the min/max/avg trio; live charts fall back to unitLabel.
-          label: (ctx) => `${ctx.dataset.label || unitLabel}: ${ctx.parsed.y.toFixed(2)}`,
           title: (items) => new Date(items[0].parsed.x).toLocaleString(i18n.intlTag()),
+          label: (ctx) => {
+            const ds = ctx.chart.data.datasets, i = ctx.datasetIndex, j = ctx.dataIndex;
+            const unit = ctx.dataset._unit;
+            return `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)} ${unit} (${fmtNum(ds[i - 2].data[j]?.y)}–${fmtNum(ds[i - 1].data[j]?.y)})`;
+          },
         },
       },
       ...(zoomable ? {
         zoom: {
           limits: { x: { min: 'original', max: 'original', minRange: MIN_ZOOM_RANGE_MS } },
-          pan: { enabled: true, mode: 'x', onPanComplete: ({ chart }) => syncZoomedRange(chart) },
-          zoom: {
-            wheel: { enabled: true },
-            pinch: { enabled: true },
-            mode: 'x',
-            onZoomComplete: ({ chart }) => syncZoomedRange(chart),
-          },
+          pan: { enabled: true, mode: 'x', onPanComplete: ({ chart }) => syncCostRange(chart) },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x', onZoomComplete: ({ chart }) => syncCostRange(chart) },
         },
       } : {}),
     },
     scales: {
-      x: {
-        type: 'time',
-        // No fixed `unit`: letting Chart.js auto-pick based on the visible
-        // (possibly zoomed) span is what makes the tick scale adapt when
-        // zooming in, instead of staying stuck on whatever the chart
-        // started at.
-        time: {
-          displayFormats: use24Hour()
-            ? { minute: 'HH:mm', hour: 'HH:mm', day: 'MMM d' }
-            : { minute: 'h:mm a', hour: 'h a', day: 'MMM d' },
-        },
-        grid: { color: color('--gridline'), drawTicks: false },
-        ticks: { color: color('--text-muted'), maxRotation: 0 },
-      },
-      y: {
-        grid: { color: color('--gridline'), drawTicks: false },
-        ticks: { color: color('--text-muted') },
-        border: { color: color('--baseline') },
-      },
+      x,
+      y: valueAxis({ title: { display: true, text: 'W', color: color('--text-muted') } }),
+      y1: valueAxis({ position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: '%', color: color('--text-muted') } }),
     },
   };
 }
 
-// Syncs the hover crosshair between a power/CPU chart pair. Listeners are
-// attached once on the canvases (not the Chart instances, which get
-// destroyed/recreated on range switches and live polls) and read the
-// current chart through a getter.
-function linkChartsHover(canvasA, getChartA, canvasB, getChartB) {
-  // Average is always the last dataset (see minMaxAvgDatasets / the live charts' single dataset).
-  function primaryIndex(chart) { return chart.data.datasets.length - 1; }
-  function nearestIndex(chart, xVal) {
-    const data = chart.data.datasets[primaryIndex(chart)]?.data || [];
-    let idx = -1, min = Infinity;
-    for (let i = 0; i < data.length; i++) {
-      const d = Math.abs(data[i].x - xVal);
-      if (d < min) { min = d; idx = i; }
-    }
-    return idx;
-  }
-  function setActive(chart, idx) {
-    if (!chart) return;
-    const active = idx < 0 ? [] : [{ datasetIndex: primaryIndex(chart), index: idx }];
-    chart.tooltip.setActiveElements(active, { x: 0, y: 0 });
-    chart.setActiveElements(active);
-    chart.update('none');
-  }
-  function onMove(sourceCanvas, sourceGetter, targetGetter, evt) {
-    const source = sourceGetter();
-    const target = targetGetter();
-    if (!source || !target) return;
-    const rect = sourceCanvas.getBoundingClientRect();
-    const xVal = source.scales.x.getValueForPixel(evt.clientX - rect.left);
-    if (xVal == null) return;
-    setActive(target, nearestIndex(target, xVal));
-  }
-  canvasA.addEventListener('mousemove', (e) => onMove(canvasA, getChartA, getChartB, e));
-  canvasB.addEventListener('mousemove', (e) => onMove(canvasB, getChartB, getChartA, e));
-  canvasA.addEventListener('mouseleave', () => setActive(getChartB(), -1));
-  canvasB.addEventListener('mouseleave', () => setActive(getChartA(), -1));
-}
-
 async function loadCharts() {
   const { from, to } = rangeToUnix();
-  let points = [];
-  try {
-    points = await api(`/api/v1/power/history?from=${from}&to=${to}`);
-  } catch (e) {
-    points = [];
+  const [points, cost] = await Promise.all([
+    api(`/api/v1/power/history?from=${from}&to=${to}`).catch(() => []),
+    api(`/api/v1/power/cost?from=${from}&to=${to}`).catch(() => null),
+  ]);
+
+  const trio = (min, max, avg) => {
+    const s = (f) => points.map((p) => ({ x: p.bucket_start * 1000, y: p[f] }));
+    return { min: s(min), max: s(max), avg: s(avg) };
+  };
+  historyChart?.destroy();
+  historyChart = new Chart(document.getElementById('historyChart'), {
+    type: 'line',
+    data: { datasets: powerCpuDatasets(trio('watts_min', 'watts_max', 'watts_avg'), trio('cpu_min_pct', 'cpu_max_pct', 'cpu_avg_pct')) },
+    options: powerCpuOptions({ from: from * 1000, to: to * 1000 }, true),
+  });
+
+  renderCost(cost, from * 1000, to * 1000);
+}
+
+// Cost per hour (ranges up to a week) or per day, as bars spanning their
+// interval, on the same x range as the power/CPU chart. The title carries
+// the period total, flagged like the KPI tiles when estimated/incomplete.
+function renderCost(cost, fromMs, toMs) {
+  const totalEl = document.getElementById('costTotal');
+  if (!cost) {
+    totalEl.textContent = `— ${i18n.t('price.na')}`;
+  } else {
+    totalEl.textContent = `— ${fmtEur(cost.total.cost_eur)} · ${fmtKwh(cost.total.kwh)}`;
+    if (!cost.total.complete) totalEl.innerHTML += ` <span class="badge-stale">${i18n.t('badge.incomplete')}</span>`;
+    else if (cost.total.provisional) totalEl.innerHTML += ` <span class="badge-stale" style="background:var(--cat-user)">${i18n.t('badge.estimate')}</span>`;
   }
 
-  const toSeries = (field) => points.map((p) => ({ x: p.bucket_start * 1000, y: p[field] }));
+  const daily = cost?.bucket === 'day';
+  const bucketMs = (daily ? 24 : 1) * 3600 * 1000;
+  const x = timeAxis();
+  x.min = fromMs;
+  x.max = toMs;
 
-  powerChart?.destroy();
-  powerChart = new Chart(document.getElementById('powerChart'), {
-    type: 'line',
-    data: { datasets: minMaxAvgDatasets(toSeries('watts_min'), toSeries('watts_max'), toSeries('watts_avg'), color('--power-line')) },
-    options: baseLineOptions('W', true),
+  costChart?.destroy();
+  costChart = new Chart(document.getElementById('costChart'), {
+    type: 'bar',
+    data: {
+      datasets: [{
+        data: (cost?.buckets || []).map((b) => ({ x: b.bucket_start * 1000 + bucketMs / 2, y: b.cost_eur, start: b.bucket_start * 1000, kwh: b.kwh })),
+        backgroundColor: color('--cost-bar'),
+        borderRadius: { topLeft: 4, topRight: 4 },
+        borderSkipped: 'bottom',
+        barPercentage: 0.85,
+        categoryPercentage: 1,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const d = new Date(items[0].raw.start);
+              return daily
+                ? d.toLocaleDateString(i18n.intlTag(), { weekday: 'short', day: 'numeric', month: 'short' })
+                : d.toLocaleString(i18n.intlTag(), { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+            },
+            label: (ctx) => `${fmtEur(ctx.parsed.y)} · ${fmtKwh(ctx.raw.kwh)}`,
+          },
+        },
+      },
+      scales: {
+        x,
+        // Hourly costs are fractions of a cent apart: 2 decimals would
+        // repeat the same tick label.
+        y: valueAxis({ ticks: { color: color('--text-muted'), callback: (v) => new Intl.NumberFormat(i18n.intlTag(), { style: 'currency', currency: 'EUR', maximumFractionDigits: 3 }).format(v) } }),
+      },
+    },
   });
-
-  const cpuOptions = baseLineOptions('%', true);
-  cpuChart?.destroy();
-  cpuChart = new Chart(document.getElementById('cpuChart'), {
-    type: 'line',
-    data: { datasets: minMaxAvgDatasets(toSeries('cpu_min_pct'), toSeries('cpu_max_pct'), toSeries('cpu_avg_pct'), color('--cpu-line')) },
-    options: { ...cpuOptions, scales: { ...cpuOptions.scales, y: { ...cpuOptions.scales.y, min: 0 } } },
-  });
-
-  // Zoom/pan on either chart mirrors onto the other (see syncZoomedRange).
-  powerChart._pairChart = cpuChart;
-  cpuChart._pairChart = powerChart;
 }
 
 // --- Live (raw, ~2s) charts ----------------------------------------------
@@ -307,7 +338,7 @@ function pruneOlderThanWindow(points, nowMs) {
 }
 
 // Buckets raw {x,y} points into fixed-width time buckets and returns the
-// [min, max, avg] series minMaxAvgDatasets expects.
+// {min, max, avg} series seriesTrio expects.
 function bucketize(points, bucketMs) {
   const buckets = new Map();
   for (const p of points) {
@@ -361,16 +392,15 @@ async function loadLive() {
   const latestCpu = liveCpuRaw[liveCpuRaw.length - 1];
   if (latestCpu) liveCpuSince = Math.floor(latestCpu.x / 1000);
 
-  const powerBuckets = bucketize(livePowerRaw, LIVE_BUCKET_MS);
-  livePowerChart = upsertChart(livePowerChart, 'livePowerChart',
-    minMaxAvgDatasets(powerBuckets.min, powerBuckets.max, powerBuckets.avg, color('--power-line')),
-    baseLineOptions('W'));
-
-  const cpuOptions = baseLineOptions('%');
-  const cpuBuckets = bucketize(liveCpuRaw, LIVE_BUCKET_MS);
-  liveCpuChart = upsertChart(liveCpuChart, 'liveCpuChart',
-    minMaxAvgDatasets(cpuBuckets.min, cpuBuckets.max, cpuBuckets.avg, color('--cpu-line')),
-    { ...cpuOptions, scales: { ...cpuOptions.scales, y: { ...cpuOptions.scales.y, min: 0 } } });
+  // The axis always spans the full window ending now, even while the
+  // data covers less of it (just after load, or after a gap).
+  const liveRange = { from: nowMs - LIVE_WINDOW_MS, to: nowMs };
+  liveChart = upsertChart(liveChart, 'liveChart',
+    powerCpuDatasets(bucketize(livePowerRaw, LIVE_BUCKET_MS), bucketize(liveCpuRaw, LIVE_BUCKET_MS)),
+    powerCpuOptions(liveRange, false));
+  liveChart.options.scales.x.min = liveRange.from;
+  liveChart.options.scales.x.max = liveRange.to;
+  liveChart.update('none');
 }
 
 function hexToRgba(hex, alpha) {
@@ -445,29 +475,120 @@ document.getElementById('rangePicker').addEventListener('click', (e) => {
   document.querySelectorAll('#rangePicker button[data-range]').forEach((b) => b.classList.remove('active'));
   btn.classList.add('active');
   currentRange = btn.dataset.range;
-  customFrom = customUntil = null;
-  document.getElementById('customFrom').value = '';
-  document.getElementById('customUntil').value = nowForDatetimeLocal();
+  customRange = null;
+  rangePicker?.clear();
   loadCharts();
   loadBreakdown();
 });
 
-// A custom "from" date overrides the preset entirely; "until" defaults to
-// now if left empty (an open-ended custom range).
-['customFrom', 'customUntil'].forEach((id) => {
-  document.getElementById(id).addEventListener('change', () => {
-    customFrom = document.getElementById('customFrom').value || null;
-    customUntil = document.getElementById('customUntil').value || null;
-    if (!customFrom) return;
-    document.querySelectorAll('#rangePicker button[data-range]').forEach((b) => b.classList.remove('active'));
-    loadCharts();
-    loadBreakdown();
+// One calendar for the custom range: first click picks the "from" day,
+// second the "to" day. The footer holds the two times and a "Now"
+// shortcut (to = this minute). Times use flatpickr's own inline time
+// widgets rather than <input type="time">, whose 12/24h display follows
+// the browser UI language: these follow use24Hour(), like the charts.
+let rangeTimes = { from: '00:00', to: '23:59' };
+let rangeTimePickers = {};
+
+function fmtRangeEnd(d) {
+  return d.toLocaleString(i18n.intlTag(), { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function withTime(day, hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate(), h || 0, m || 0);
+}
+
+function showRangeText() {
+  if (customRange) rangePicker.input.value = `${fmtRangeEnd(customRange.from)} → ${fmtRangeEnd(customRange.to)}`;
+}
+
+function applyCustomRange() {
+  const days = rangePicker.selectedDates;
+  if (days.length !== 2) return;
+  let from = withTime(days[0], rangeTimes.from), to = withTime(days[1], rangeTimes.to);
+  if (to <= from) [from, to] = [to, from];
+  customRange = { from, to };
+  showRangeText();
+  document.querySelectorAll('#rangePicker button[data-range]').forEach((b) => b.classList.remove('active'));
+  loadCharts();
+  loadBreakdown();
+}
+
+function rangeFooter() {
+  const footer = document.createElement('div');
+  footer.className = 'range-footer';
+  footer.innerHTML = `
+    <div class="range-time"><span>${i18n.t('range.from_time')}</span><input data-end="from" /></div>
+    <div class="range-time"><span>${i18n.t('range.to_time')}</span><input data-end="to" /></div>
+    <button type="button" class="range-now">${i18n.t('range.now')}</button>`;
+  footer.querySelectorAll('input[data-end]').forEach((el) => {
+    const end = el.dataset.end;
+    rangeTimePickers[end] = flatpickr(el, {
+      enableTime: true,
+      noCalendar: true,
+      inline: true,
+      time_24hr: use24Hour(),
+      dateFormat: 'H:i',
+      defaultDate: rangeTimes[end],
+      onChange: (_, hhmm) => {
+        if (!hhmm) return;
+        rangeTimes[end] = hhmm;
+        applyCustomRange();
+      },
+    });
   });
-});
+  footer.querySelector('.range-now').addEventListener('click', () => {
+    const now = new Date();
+    rangeTimes.to = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    rangeTimePickers.to.setDate(rangeTimes.to, false);
+    // Day only: flatpickr drops a date past maxDate ('today' = 00:00),
+    // the time lives in rangeTimes.
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    rangePicker.setDate([rangePicker.selectedDates[0] || today, today], false);
+    applyCustomRange();
+    rangePicker.close();
+  });
+  return footer;
+}
+
+// Week start from the regional format too (Monday in most of Europe),
+// where the browser exposes it.
+function firstDayOfWeek() {
+  try {
+    const loc = new Intl.Locale(i18n.intlTag());
+    const info = loc.getWeekInfo ? loc.getWeekInfo() : loc.weekInfo;
+    return info.firstDay % 7;
+  } catch (e) {
+    return 1;
+  }
+}
+
+function initRangePicker() {
+  Object.values(rangeTimePickers).forEach((fp) => fp.destroy());
+  rangeTimePickers = {};
+  rangePicker?.destroy();
+  const base = i18n.locale === 'it' ? flatpickr.l10ns.it : flatpickr.l10ns.default;
+  rangePicker = flatpickr('#customRange', {
+    mode: 'range',
+    maxDate: 'today',
+    dateFormat: 'j M Y',
+    locale: { ...base, firstDayOfWeek: firstDayOfWeek() },
+    defaultDate: customRange ? [customRange.from, customRange.to] : undefined,
+    onReady: (_, __, fp) => fp.calendarContainer.appendChild(rangeFooter()),
+    onChange: (dates) => {
+      if (dates.length === 2) applyCustomRange();
+    },
+    // flatpickr rewrites the field with dates only (e.g. on close): put
+    // the times back.
+    onClose: () => setTimeout(showRangeText),
+  });
+  showRangeText();
+}
 
 document.getElementById('resetZoomBtn').addEventListener('click', () => {
-  powerChart?.resetZoom();
-  cpuChart?.resetZoom();
+  if (!historyChart) return;
+  historyChart.resetZoom();
+  syncCostRange(historyChart);
 });
 
 // --- Pricing periods -------------------------------------------------------
@@ -634,9 +755,9 @@ document.getElementById('localeSwitcher').addEventListener('change', async (e) =
   await i18n.setLocale(e.target.value);
   // Live charts are updated in place, not recreated, so they need an
   // explicit rebuild to pick up the new tick format.
-  livePowerChart?.destroy();
-  liveCpuChart?.destroy();
-  livePowerChart = liveCpuChart = null;
+  liveChart?.destroy();
+  liveChart = null;
+  initRangePicker();
   loadAll();
 });
 
@@ -645,10 +766,7 @@ document.getElementById('localeSwitcher').addEventListener('change', async (e) =
 async function main() {
   await i18n.init();
   document.getElementById('localeSwitcher').value = i18n.locale;
-  document.getElementById('customUntil').value = nowForDatetimeLocal();
-
-  linkChartsHover(document.getElementById('powerChart'), () => powerChart, document.getElementById('cpuChart'), () => cpuChart);
-  linkChartsHover(document.getElementById('livePowerChart'), () => livePowerChart, document.getElementById('liveCpuChart'), () => liveCpuChart);
+  initRangePicker();
 
   loadAll();
   setInterval(loadKpis, 30000); // cost/price summary

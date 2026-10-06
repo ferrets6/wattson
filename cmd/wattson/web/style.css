@@ -14,6 +14,7 @@
   --cat-unknown: #1baf7a; /* categorical slot 3: aqua */
   --cpu-line: #eb6834;
   --power-line: #2a78d6;
+  --cost-bar: #1baf7a;
   --success: #006300;
   --danger: #e34948;
 }
@@ -35,6 +36,7 @@
     --cat-unknown: #199e70;
     --cpu-line: #d95926;
     --power-line: #3987e5;
+    --cost-bar: #199e70;
     --success: #0ca30c;
     --danger: #e66767;
   }
@@ -177,20 +179,33 @@ section h2 {
   font-size: 12px;
 }
 
+/* Same box as the preset buttons, text centered (placeholder and the
+   selected range alike), width following the text. */
 .range-custom input {
+  box-sizing: border-box;
+  height: 32px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-primary);
   border-radius: 6px;
-  padding: 5px 6px;
-  font-size: 12px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 30px;
+  text-align: center;
+  field-sizing: content;
+  min-width: 190px;
+  cursor: pointer;
 }
+.range-custom input.active { border-color: var(--power-line); }
 
 #resetZoomBtn {
   margin-left: auto;
 }
 
 .range-picker button {
+  box-sizing: border-box;
+  height: 32px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-primary);
@@ -370,3 +385,109 @@ form.period-form button {
   text-decoration: underline;
   padding: 0;
 }
+
+/* flatpickr, re-themed with the page tokens (light + dark). Its own CSS
+   loads before this file, so equal-specificity rules here win. */
+.flatpickr-calendar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  font-family: inherit;
+  color: var(--text-primary);
+}
+.flatpickr-calendar.arrowTop::before { border-bottom-color: var(--border); }
+.flatpickr-calendar.arrowTop::after { border-bottom-color: var(--surface); }
+.flatpickr-calendar.arrowBottom::before { border-top-color: var(--border); }
+.flatpickr-calendar.arrowBottom::after { border-top-color: var(--surface); }
+.flatpickr-months .flatpickr-month,
+.flatpickr-current-month .flatpickr-monthDropdown-months,
+.flatpickr-current-month input.cur-year,
+span.flatpickr-weekday {
+  color: var(--text-primary);
+  fill: var(--text-primary);
+  background: transparent;
+}
+.flatpickr-current-month { font-size: 14px; font-weight: 600; }
+.flatpickr-current-month .flatpickr-monthDropdown-months option { background: var(--surface); color: var(--text-primary); }
+span.flatpickr-weekday { color: var(--text-muted); font-weight: 500; }
+.flatpickr-months .flatpickr-prev-month,
+.flatpickr-months .flatpickr-next-month { fill: var(--text-secondary); color: var(--text-secondary); }
+.flatpickr-months .flatpickr-prev-month:hover svg,
+.flatpickr-months .flatpickr-next-month:hover svg { fill: var(--power-line); }
+.flatpickr-day { color: var(--text-primary); border-radius: 6px; }
+.flatpickr-day:hover, .flatpickr-day:focus { background: var(--gridline); border-color: var(--gridline); }
+.flatpickr-day.today { border-color: var(--baseline); }
+.flatpickr-day.prevMonthDay, .flatpickr-day.nextMonthDay,
+.flatpickr-day.flatpickr-disabled, .flatpickr-day.flatpickr-disabled:hover {
+  color: var(--text-muted);
+  opacity: 0.45;
+  background: transparent;
+  border-color: transparent;
+}
+.flatpickr-day.inRange, .flatpickr-day.inRange:hover {
+  background: color-mix(in srgb, var(--power-line) 18%, transparent);
+  border-color: transparent;
+  box-shadow: -5px 0 0 color-mix(in srgb, var(--power-line) 18%, transparent), 5px 0 0 color-mix(in srgb, var(--power-line) 18%, transparent);
+  border-radius: 0;
+}
+.flatpickr-day.selected, .flatpickr-day.startRange, .flatpickr-day.endRange,
+.flatpickr-day.selected:hover, .flatpickr-day.startRange:hover, .flatpickr-day.endRange:hover {
+  background: var(--power-line);
+  border-color: var(--power-line);
+  color: #fff;
+}
+
+/* Footer: from/to times + "Now". The two time widgets are inline
+   flatpickr instances (see rangeFooter in app.js). */
+.range-footer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.range-time { display: flex; flex-direction: column; gap: 4px; }
+.range-time > input { display: none; }
+.range-footer .flatpickr-calendar.inline {
+  width: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: none;
+  top: 0;
+}
+.range-footer .flatpickr-time { max-height: 34px; height: 34px; line-height: 34px; border: 0; }
+.range-footer .flatpickr-time input,
+.range-footer .flatpickr-time .flatpickr-time-separator,
+.range-footer .flatpickr-time .flatpickr-am-pm {
+  color: var(--text-primary);
+  background: transparent;
+  font-size: 13px;
+  height: 34px;
+}
+.range-footer .flatpickr-time input { width: 34px; }
+.range-footer .flatpickr-time .numInputWrapper { width: 40px; flex: 0 0 auto; }
+.range-footer .flatpickr-time .flatpickr-am-pm { width: 34px; flex: 0 0 auto; }
+.range-footer .flatpickr-time input:hover, .range-footer .flatpickr-time input:focus,
+.range-footer .flatpickr-time .flatpickr-am-pm:hover, .range-footer .flatpickr-time .flatpickr-am-pm:focus {
+  background: var(--gridline);
+}
+.numInputWrapper span.arrowUp::after { border-bottom-color: var(--text-secondary); }
+.numInputWrapper span.arrowDown::after { border-top-color: var(--text-secondary); }
+.range-now {
+  margin-left: auto;
+  box-sizing: border-box;
+  height: 34px;
+  border: 1px solid var(--power-line);
+  background: transparent;
+  color: var(--power-line);
+  border-radius: 6px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.range-now:hover { background: color-mix(in srgb, var(--power-line) 12%, transparent); }

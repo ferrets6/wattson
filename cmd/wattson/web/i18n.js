@@ -7,6 +7,21 @@ const DEFAULT_LOCALE = 'en';
 const STORAGE_KEY = 'wattson_locale';
 const INTL_TAG = { en: 'en-US', it: 'it-IT' };
 
+// Browsers don't expose the OS's regional format (12/24h clock, day/month
+// order) to JS: Intl just follows the UI language, so an English Chrome in
+// Italy would format like the US. The time zone is the signal available
+// instead: English means en-US in a 12-hour-clock region, en-GB (24h,
+// day/month) anywhere else.
+const TWELVE_HOUR_ZONES = /^(US\/|Canada\/|America\/(New_York|Chicago|Denver|Los_Angeles|Phoenix|Anchorage|Juneau|Sitka|Nome|Adak|Boise|Detroit|Indiana\/|Kentucky\/|North_Dakota\/|Menominee|Toronto|Vancouver|Edmonton|Winnipeg|Regina|Halifax|St_Johns|Moncton|Whitehorse|Yellowknife)|Pacific\/Honolulu|Australia\/|Pacific\/Auckland|Asia\/(Kolkata|Calcutta|Karachi|Dhaka|Manila)|Africa\/Cairo)/;
+
+function regionalEnglishTag() {
+  try {
+    return TWELVE_HOUR_ZONES.test(Intl.DateTimeFormat().resolvedOptions().timeZone) ? 'en-US' : 'en-GB';
+  } catch (e) {
+    return 'en-US';
+  }
+}
+
 let translations = {};
 let currentLocale = DEFAULT_LOCALE;
 
@@ -64,7 +79,7 @@ window.i18n = {
   t,
   setLocale,
   init,
-  intlTag: () => INTL_TAG[currentLocale] || INTL_TAG[DEFAULT_LOCALE],
+  intlTag: () => (currentLocale === 'en' ? regionalEnglishTag() : INTL_TAG[currentLocale] || INTL_TAG[DEFAULT_LOCALE]),
   get locale() {
     return currentLocale;
   },

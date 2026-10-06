@@ -105,7 +105,7 @@ func TestPowerHistoryUsesMinutelyForShortRanges(t *testing.T) {
 
 	var points []powerHourlyPoint
 	json.NewDecoder(rec.Body).Decode(&points)
-	if len(points) != 1 || points[0].WattsAvg != 45.0 || points[0].CpuAvgPct != 8.0 {
+	if len(points) != 1 || points[0].WattsAvg != 45.0 || points[0].CpuAvgPct == nil || *points[0].CpuAvgPct != 8.0 {
 		t.Errorf("unexpected points: %+v", points)
 	}
 }
@@ -126,14 +126,12 @@ func TestPowerHistoryCpuMinMaxFallsBackToAvgWhenMissing(t *testing.T) {
 
 	var points []powerHourlyPoint
 	json.NewDecoder(rec.Body).Decode(&points)
-	if len(points) != 1 || points[0].CpuAvgPct != 10.0 || points[0].CpuMinPct != 4.0 || points[0].CpuMaxPct != 18.0 {
+	if len(points) != 1 || points[0].CpuAvgPct == nil || *points[0].CpuAvgPct != 10.0 || *points[0].CpuMinPct != 4.0 || *points[0].CpuMaxPct != 18.0 {
 		t.Errorf("unexpected points: %+v", points)
 	}
 
 	// A second bucket with no resource_hourly row at all (Beszel gap):
-	// min/max must fall back to avg (0 here) instead of surfacing as null/0
-	// disagreeing with avg, which would draw an empty band around a
-	// nonzero-looking average.
+	// avg/min/max are all null (a gap in the chart), never a fake 0%.
 	bucketStart2 := now - 7200
 	db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		bucketStart2, 30.0, 25.0, 35.0, 0.03, 230, 1, 100)
@@ -145,8 +143,8 @@ func TestPowerHistoryCpuMinMaxFallsBackToAvgWhenMissing(t *testing.T) {
 	if len(points2) != 2 {
 		t.Fatalf("expected 2 points, got %d: %+v", len(points2), points2)
 	}
-	if points2[0].CpuAvgPct != 0 || points2[0].CpuMinPct != 0 || points2[0].CpuMaxPct != 0 {
-		t.Errorf("bucket with no resource_hourly row: cpu avg/min/max = %v/%v/%v, want 0/0/0",
+	if points2[0].CpuAvgPct != nil || points2[0].CpuMinPct != nil || points2[0].CpuMaxPct != nil {
+		t.Errorf("bucket with no resource_hourly row: cpu avg/min/max = %v/%v/%v, want all null",
 			points2[0].CpuAvgPct, points2[0].CpuMinPct, points2[0].CpuMaxPct)
 	}
 }
@@ -274,5 +272,65 @@ func TestPricingPreviewRequiresModeParam(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/pricing/preview?from=2026-03-10&to=2026-03-10", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 without spread/fixed_price", rec.Code)
+	}
+}
+
+func TestPowerCostBucketsByHourOrRomeDay(t *testing.T) {
+	db, h := newTestServer(t)
+	body := []byte(`{"valid_from":"2026-01-01","valid_until":"2026-01-31","mode":"fixed_override","fixed_price":0.5}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/pricing/periods", bytes.NewReader(body)))
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("create period: status %d", rec.Code)
+	}
+
+	// 22:00 and 23:00 on Jan 10, 00:00 on Jan 11 (Rome): two Rome days.
+	loc := pricing.RomeLocation()
+	first := time.Date(2026, 1, 10, 22, 0, 0, 0, loc).Unix()
+	for i := int64(0); i < 3; i++ {
+		db.Exec(`INSERT INTO power_hourly (bucket_start, watts_avg, watts_min, watts_max, kwh, voltage_avg, current_avg, sample_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			first+i*3600, 100.0, 90.0, 110.0, 0.1, 230.0, 0.4, 360)
+	}
+
+	get := func(from, to int64) costResponse {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/cost?from=%d&to=%d", from, to), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		var resp costResponse
+		json.NewDecoder(rec.Body).Decode(&resp)
+		return resp
+	}
+
+	hourly := get(first-3600, first+4*3600)
+	if hourly.Bucket != "hour" || len(hourly.Buckets) != 3 {
+		t.Fatalf("hourly: %+v", hourly)
+	}
+	daily := get(first-10*24*3600, first+4*3600)
+	if daily.Bucket != "day" || len(daily.Buckets) != 2 {
+		t.Fatalf("daily: %+v", daily)
+	}
+	if got := daily.Buckets[0].CostEur; got < 0.0999 || got > 0.1001 {
+		t.Errorf("Jan 10 cost = %v, want 0.1 (2 × 0.1 kWh × 0.5 €)", got)
+	}
+	if got := daily.Total.CostEur; got < 0.1499 || got > 0.1501 || !daily.Total.Complete {
+		t.Errorf("total = %+v, want 0.15 complete", daily.Total)
+	}
+}
+
+func TestPowerHistoryMinutelyFallsBackToHourlyCpu(t *testing.T) {
+	db, h := newTestServer(t)
+	hour := time.Now().Add(-3*time.Hour).Unix() / 3600 * 3600
+	// Backfilled hour: power per minute, CPU only hourly.
+	db.Exec(`INSERT INTO power_minutely (bucket_start, watts_avg, watts_min, watts_max, sample_count) VALUES (?, 40, 38, 42, 60)`, hour+600)
+	db.Exec(`INSERT INTO resource_hourly (bucket_start, container, cpu_avg, cpu_min, cpu_max, mem_used_avg, net_sent_bytes_avg, net_recv_bytes_avg) VALUES (?, '__host__', 6, 6, 6, 0, 0, 0)`, hour)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/power/history?from=%d&to=%d", hour, hour+3600), nil))
+	var points []powerHourlyPoint
+	json.NewDecoder(rec.Body).Decode(&points)
+	if len(points) != 1 || points[0].CpuAvgPct == nil || *points[0].CpuAvgPct != 6 {
+		t.Errorf("minute without minute-level CPU should use its hour's: %+v", points)
 	}
 }

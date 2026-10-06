@@ -4,11 +4,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Wattson</title>
+  <!-- flatpickr first: style.css re-themes it with the page tokens. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/it.js"></script>
 </head>
 <body>
   <header>
@@ -52,15 +56,9 @@
 
     <section>
       <h2 data-i18n="live.title">Live (last 15 min)</h2>
-      <div class="charts-grid">
-        <div class="chart-card">
-          <h2 data-i18n="chart.power_title">Power (W)</h2>
-          <canvas id="livePowerChart" height="90"></canvas>
-        </div>
-        <div class="chart-card">
-          <h2 data-i18n="chart.cpu_title">CPU usage (%)</h2>
-          <canvas id="liveCpuChart" height="90"></canvas>
-        </div>
+      <div class="chart-card">
+        <h2 data-i18n="chart.power_cpu_title">Power and CPU</h2>
+        <canvas id="liveChart" height="90"></canvas>
       </div>
     </section>
 
@@ -70,9 +68,7 @@
         <button data-range="week" data-i18n="range.week">7 days</button>
         <button data-range="month" data-i18n="range.month">30 days</button>
         <span class="range-custom">
-          <input type="datetime-local" id="customFrom" aria-label="From" />
-          <span>&ndash;</span>
-          <input type="datetime-local" id="customUntil" aria-label="To" />
+          <input type="text" id="customRange" readonly data-i18n-placeholder="range.custom" placeholder="Custom range" aria-label="Custom range" />
         </span>
         <button type="button" class="icon-btn" id="resetZoomBtn" data-i18n="chart.reset_zoom">Reset zoom</button>
       </div>
@@ -80,12 +76,12 @@
 
       <div class="charts-grid">
         <div class="chart-card">
-          <h2 data-i18n="chart.power_title">Power (W)</h2>
-          <canvas id="powerChart" height="90"></canvas>
+          <h2 data-i18n="chart.power_cpu_title">Power and CPU</h2>
+          <canvas id="historyChart" height="90"></canvas>
         </div>
         <div class="chart-card">
-          <h2 data-i18n="chart.cpu_title">CPU usage (%)</h2>
-          <canvas id="cpuChart" height="90"></canvas>
+          <h2><span data-i18n="chart.cost_title">Cost</span> <span class="chart-total" id="costTotal"></span></h2>
+          <canvas id="costChart" height="90"></canvas>
         </div>
       </div>
     </section>

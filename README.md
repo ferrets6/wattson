@@ -80,6 +80,13 @@ running, `cmd/backfill` imports it once:
 go run ./cmd/backfill --since 2026-01-01T00:00:00Z
 ```
 
+To fill a gap in the CPU history only, bound it with `--until` and read
+Beszel's coarser resolutions (it keeps fine ones only briefly), coarsest
+first: `--since … --until … --beszel-resolution 480m,120m`. Each coarse
+record is spread over the hours it covers. Stop the running service first:
+the rollup it triggers holds the database long enough to make live writes
+fail.
+
 It reads the Tasmota's power history from Home Assistant, so it also needs
 `HA_TASMOTA_ENTITY_PREFIX` (see `.env.example`). Not part of the running
 service — run it by hand when needed. See its
