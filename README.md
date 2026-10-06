@@ -13,9 +13,9 @@ that:
 - serves a small SPA dashboard (charts, cost breakdown, price period
   editor) from the same binary.
 
-Not a general-purpose tool: topic names, entity IDs, and network addresses
-in the code assume a specific home setup (see [`CLAUDE.md`](CLAUDE.md)).
-Published so the pieces are reusable, not as a turnkey product.
+Built for one specific home setup (see [`CLAUDE.md`](CLAUDE.md)); everything
+setup-specific comes from `.env`. Published so the pieces are reusable, not
+as a turnkey product.
 
 ## How it works
 
@@ -80,7 +80,9 @@ running, `cmd/backfill` imports it once:
 go run ./cmd/backfill --since 2026-01-01T00:00:00Z
 ```
 
-Not part of the running service — run it by hand when needed. See its
+It reads the Tasmota's power history from Home Assistant, so it also needs
+`HA_TASMOTA_ENTITY_PREFIX` (see `.env.example`). Not part of the running
+service — run it by hand when needed. See its
 `--help` for options (Beszel resolution, etc).
 
 ## Docker

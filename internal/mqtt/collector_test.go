@@ -7,8 +7,7 @@ import (
 	"github.com/ferrets6/wattson/internal/store"
 )
 
-// realPayload was captured from the "Sonoff Dual Meter" Tasmota device via
-// tele/tasmota/SENSOR.
+// realPayload was captured from a real "Sonoff Dual Meter" Tasmota device.
 const realPayload = `{"Time":"2026-09-18T11:19:21","ENERGY":{"TotalStartTime":"2026-09-16T00:00:00","Total":[2.813,0.254],"Yesterday":[1.530,0.125],"Today":[0.772,0.059],"Power":[52,5],"ApparentPower":[66,10],"ReactivePower":[40,9],"Factor":[0.79,0.50],"Voltage":235,"Current":[0.278,0.044],"BL09XX":{"Temperature":46.5}}}`
 
 func TestParseLine1UsesOnlyFirstLine(t *testing.T) {

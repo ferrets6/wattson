@@ -8,7 +8,7 @@ Status tracker. Done = one-liners. Open = enough context to act on. See
 - **Setup**: Go module, folder layout, `.gitignore`.
 - **Storage** (`internal/store`): SQLite (`modernc.org/sqlite`, no CGO),
   embedded migrations, raw tables + hourly rollup from day one.
-- **MQTT collector**: subscribes to `tele/tasmota/SENSOR`,
+- **MQTT collector**: subscribes to the Tasmota telemetry topic,
   auto-reconnect, non-blocking `Start()`.
 - **Beszel client**: PocketBase login, polls host + per-container metrics.
 - **Home Assistant / PUN client**: hourly poll of `sensor.pun_orario` into
@@ -24,8 +24,7 @@ Status tracker. Done = one-liners. Open = enough context to act on. See
   browser-language default + switcher).
 - **Docker**: multi-stage build, distroless final image, embedded tzdata.
 - **Backfill tool**: one-off import of pre-existing HA/Beszel history.
-- **Published**: `github.com/ferrets6/wattson` (private), deployed via the
-  `homelab` repo.
+- **Published**: `github.com/ferrets6/wattson`.
 - **`SQLITE_BUSY` fix**: capped the connection pool at 1 (SQLite's real
   limit anyway); fixed two deadlocks that cap exposed
   (`rollup.rollupResources`, `api.summaryFor`) by fully buffering a
@@ -75,15 +74,13 @@ Status tracker. Done = one-liners. Open = enough context to act on. See
 - **Idle baseline**: the dynamic 10th-percentile calc still has under a
   week of real data (currently reads 37.8 W vs. ~32 W expected). Revisit
   once a full week has accumulated, around 2026-09-23.
-- **Tasmota's address is stale**: `tasmota.example.lan` (in `CLAUDE.md`)
-  doesn't respond from anywhere tried. User is locating the current
-  IP/port and will lower `TelePeriod` to 2s; update `CLAUDE.md` once
-  known — no Wattson code changes needed for that part.
+- **Tasmota `TelePeriod` to 2s**: user is locating the device's current
+  address to lower it — no Wattson code changes needed for that part.
 - **Host `/proc/stat` access unverified on the real NAS**: works locally
   against a simulated file; standard Docker behavior should expose the
   host's own `/proc/stat` without any mount, but hasn't been confirmed on
   that box yet. `HOSTCPU_PROC_STAT_PATH` + a `/proc:/host/proc:ro` mount
-  in `homelab`'s `docker-compose.yml` is the fallback if it doesn't.
+  in the deployment's `docker-compose.yml` is the fallback if it doesn't.
 - **Mobile layout**: the live section added a 3rd/4th chart above the
   historical pair (4 time-series charts total on a phone). Not checked on
   a real device yet.
