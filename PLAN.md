@@ -55,10 +55,14 @@ through hours with no raw samples (e.g. MQTT broker down): it never gets
 stuck retrying the same hour forever, and the gap stays visible through the
 API as a missing `power_hourly` row.
 
-Idle baseline is configurable: default = 10th percentile of `watts_avg`
-over a trailing 7-day window (computed in Go, no percentile arithmetic in
-SQL), or a fixed override (`FixedBaselineWatts`) — the value itself is to
-be calibrated once there's more real data to look at.
+Idle baseline = 10th percentile of `watts_avg` over a trailing 7-day
+window (computed in Go, no percentile arithmetic in SQL). It tracks the
+real idle draw on its own (~35 W as of 2026-10).
+
+If raw power samples are already past retention when a bucket is
+(re)processed (a backfill rewinding the cursor for resource history), the
+existing `power_hourly` row is reused so resources and attribution still
+get computed.
 
 ### 5. Pricing engine — `internal/pricing`
 
@@ -122,7 +126,12 @@ local development.
 - `GET /api/v1/power/current` — latest sample, `stale: true` if older than 2 minutes.
 - `GET /api/v1/power/history?from=&to=` — minute-level rollup for ranges up
   to 7 days, hourly beyond that (same response shape either way); includes
-  host CPU avg/min/max alongside power.
+  host CPU avg/min/max alongside power. CPU is `null` where there's no host
+  CPU data (a gap, never a fake 0%); minutes with only hourly CPU (hours
+  rebuilt by `cmd/backfill`) get their hour's value.
+- `GET /api/v1/power/cost?from=&to=` — cost per hour (ranges up to 7 days)
+  or per Europe/Rome day (longer), plus the period total; same per-hour
+  pricing as `/power/summary`.
 - `GET /api/v1/power/live` — raw power + host CPU (from `/proc`, not
   Beszel) for the last 15 minutes, for the live dashboard chart.
 - `GET /api/v1/power/summary` — kWh and cost for the last 24h/this month
@@ -152,12 +161,18 @@ jsdelivr (cdnjs returned 503 during browser testing — worth remembering if
 the CDN misbehaves in production).
 
 Sections:
-- Range picker (today/7 days/30 days — no custom range yet, YAGNI until
-  actually needed).
-- **Two separate charts**, power (W) and hourly energy (kWh), **not
-  overlaid**: the `dataviz` skill forbids dual-axis charts, so the original
-  idea of overlaying cost on the power chart became two side-by-side charts
-  instead.
+- Range picker: presets (24h/7 days/30 days) + one flatpickr calendar for
+  a custom range (first click = from day, second = to day) with from/to
+  times and a "Now" shortcut in its footer.
+- **Power and CPU on one chart** (W left axis, % right axis), live and
+  historical. A dual-axis chart goes against the `dataviz` skill; it's the
+  user's explicit call to evaluate it this way (2026-10-06). Both axes
+  always start at 0.
+- **Cost chart** next to it: bars per hour/day on the same x range (zoom
+  syncs), period total in the title, flagged when estimated/incomplete.
+- Dates/times: Intl with a regional tag. Browsers don't expose the OS's
+  regional format, so English picks en-US vs en-GB from the time zone
+  (12h vs 24h clock), see `i18n.js`.
 - Category breakdown (horizontal stacked bar, 3 fixed categories with fixed
   identity colors) + a container table (past ~7 entries a table is the
   right form, not a chart) — always labeled as an estimate.

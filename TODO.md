@@ -14,8 +14,7 @@ Status tracker. Done = one-liners. Open = enough context to act on. See
 - **Home Assistant / PUN client**: hourly poll of `sensor.pun_orario` into
   `pun_prices`; never fabricates a price if the entity is unavailable.
 - **Attribution engine**: container→category config, hourly rollup with a
-  persisted cursor, idle baseline (10th percentile over a trailing window,
-  or a fixed override).
+  persisted cursor, idle baseline (10th percentile over a trailing window).
 - **Pricing engine**: bills on the monthly PUN average + spread, period
   overrides (fixed price or custom spread), overlapping periods rejected
   on write.
@@ -69,18 +68,38 @@ Status tracker. Done = one-liners. Open = enough context to act on. See
   (time-of-day selectable, not just a date), with "until" defaulting to
   now.
 
+- **Charts rework (2026-10-07)**: power + CPU on one dual-axis chart
+  (live and historical, user's call vs. the dataviz skill — to be judged
+  on the preview); new cost bar chart (`GET /power/cost`, hourly ≤7 days,
+  daily beyond) with the period total in its title; all value axes start
+  at 0; live axis pinned to the full 15-minute window; single flatpickr
+  calendar for the custom range with from/to times and a "Now" button,
+  themed with the page tokens; 12h/24h + day/month order for English
+  picked from the time zone (en-US vs en-GB), numbers localized.
+- **Beszel silent stop fixed**: an expired token got 200 + empty systems
+  list instead of 401, so polling stopped (2026-09-24 → 2026-10-06) with
+  nothing logged. An empty list now forces a re-login.
+- **CPU gap backfilled**: `cmd/backfill` gained `--until` and multiple
+  coarse-to-fine resolutions (`480m,120m`), spreading each coarse Beszel
+  record over the hours it covers; the rollup reuses `power_hourly` when
+  raw power is past retention. Run against production on 2026-10-06 for
+  2026-09-24T18:00Z → 2026-10-06T19:00Z. It ran alongside the live
+  service and cost ~4 minutes of 1s power samples to `SQLITE_BUSY` —
+  next time stop the container first.
+- **CPU gaps not drawn as 0%**: `/power/history` returns `null` for
+  missing CPU.
+- **Fixed idle baseline knob removed**: never wired to config; the dynamic
+  10th percentile tracks the real idle draw (~35 W as of 2026-10).
+- **Verified on the NAS**: Tasmota publishes ~every 1s; `/proc/stat` is
+  readable from the container (host CPU every 2s since 2026-09-29).
+
 ## Open
 
-- **Idle baseline**: the dynamic 10th-percentile calc still has under a
-  week of real data (currently reads 37.8 W vs. ~32 W expected). Revisit
-  once a full week has accumulated, around 2026-09-23.
-- **Tasmota `TelePeriod` to 2s**: user is locating the device's current
-  address to lower it — no Wattson code changes needed for that part.
-- **Host `/proc/stat` access unverified on the real NAS**: works locally
-  against a simulated file; standard Docker behavior should expose the
-  host's own `/proc/stat` without any mount, but hasn't been confirmed on
-  that box yet. `HOSTCPU_PROC_STAT_PATH` + a `/proc:/host/proc:ro` mount
-  in the deployment's `docker-compose.yml` is the fallback if it doesn't.
-- **Mobile layout**: the live section added a 3rd/4th chart above the
-  historical pair (4 time-series charts total on a phone). Not checked on
-  a real device yet.
+- **Preview review pending**: dual-axis vs. split power/CPU charts, cost
+  chart, calendar — awaiting the user's verdict before push/deploy.
+- **Homepage card shows 0**: its `customapi` `format: number` runs
+  `parseInt`, so sub-1 values (kWh, €, €/kWh) print as 0. Fix in homelab:
+  `format: float` on the Wattson card's three mappings (the only ones
+  using `format: number`).
+- **Mobile layout**: now 3 time-series charts; looks fine in headless
+  Chrome at 390px, not checked on a real phone yet.

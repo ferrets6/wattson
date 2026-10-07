@@ -27,7 +27,6 @@ type Config struct {
 	MinutelyRetention  time.Duration // default 8*24h (a bit past a week, see api.minutelyRangeThreshold)
 	BaselineWindow     time.Duration // default 7*24h
 	BaselinePercentile float64       // default 0.1 (10th percentile = "low load")
-	FixedBaselineWatts *float64      // if set, skips the dynamic computation
 	Attribution        attribution.Config
 }
 
@@ -135,14 +134,25 @@ func rollupBucket(db *sql.DB, cfg Config, bucketStart int64) error {
 	if err != nil {
 		return err
 	}
-	if !hasPower {
-		return nil // no samples in this window (e.g. broker down): no row, a gap visible through the API
-	}
-
-	// Minute-level rollup rides along with the hourly one instead of its
-	// own ticker: same cadence, same already-fetched raw data.
-	if err := rollupPowerMinutes(db, bucketStart, bucketEnd); err != nil {
-		return err
+	if hasPower {
+		// Minute-level rollup rides along with the hourly one instead of its
+		// own ticker: same cadence, same already-fetched raw data.
+		if err := rollupPowerMinutes(db, bucketStart, bucketEnd); err != nil {
+			return err
+		}
+	} else {
+		// No raw samples: either none ever arrived (broker down: no row, a
+		// gap visible through the API) or they're past RawRetention and a
+		// backfill rewound the cursor to import resource history. In the
+		// latter case the hourly power row survives: reuse it so resources
+		// and attribution still get (re)computed.
+		err := db.QueryRow(`SELECT watts_avg FROM power_hourly WHERE bucket_start = ?`, bucketStart).Scan(&wattsAvg)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
 	}
 	if err := rollupResourceMinutes(db, bucketStart, bucketEnd); err != nil {
 		return err
@@ -343,14 +353,10 @@ func nullableFloat(v sql.NullFloat64) any {
 	return v.Float64
 }
 
-// baselineWatts returns the idle baseline power: a fixed value if
-// configured, otherwise the low percentile of watts_avg in the configured
-// trailing window (default: 10th percentile, last 7 days).
+// baselineWatts returns the idle baseline power: the low percentile of
+// watts_avg in the configured trailing window (default: 10th percentile,
+// last 7 days).
 func baselineWatts(db *sql.DB, cfg Config) (float64, error) {
-	if cfg.FixedBaselineWatts != nil {
-		return *cfg.FixedBaselineWatts, nil
-	}
-
 	windowStart := time.Now().Add(-cfg.BaselineWindow).Unix()
 	rows, err := db.Query(`SELECT watts_avg FROM power_hourly WHERE bucket_start >= ?`, windowStart)
 	if err != nil {

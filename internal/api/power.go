@@ -43,9 +43,11 @@ type powerHourlyPoint struct {
 	WattsMin    float64 `json:"watts_min"`
 	WattsMax    float64 `json:"watts_max"`
 	Kwh         float64 `json:"kwh"`
-	CpuAvgPct   float64 `json:"cpu_avg_pct"`
-	CpuMinPct   float64 `json:"cpu_min_pct"`
-	CpuMaxPct   float64 `json:"cpu_max_pct"`
+	// CPU is null for buckets with no host CPU data (e.g. a Beszel gap):
+	// charted as a gap, never as a fake 0%.
+	CpuAvgPct *float64 `json:"cpu_avg_pct"`
+	CpuMinPct *float64 `json:"cpu_min_pct"`
+	CpuMaxPct *float64 `json:"cpu_max_pct"`
 }
 
 // minutelyRangeThreshold: requests spanning at most this long use the
@@ -56,19 +58,22 @@ const minutelyRangeThreshold = 7 * 24 * time.Hour
 
 const historyHourlyQuery = `
 	SELECT ph.bucket_start, ph.watts_avg, ph.watts_min, ph.watts_max, ph.kwh,
-	       COALESCE(rh.cpu_avg, 0), COALESCE(rh.cpu_min, rh.cpu_avg, 0), COALESCE(rh.cpu_max, rh.cpu_avg, 0)
+	       rh.cpu_avg, COALESCE(rh.cpu_min, rh.cpu_avg), COALESCE(rh.cpu_max, rh.cpu_avg)
 	FROM power_hourly ph
 	LEFT JOIN resource_hourly rh ON rh.bucket_start = ph.bucket_start AND rh.container = '__host__'
 	WHERE ph.bucket_start >= ? AND ph.bucket_start < ?
 	ORDER BY ph.bucket_start`
 
 // power_minutely has no kwh column; the literal 0 keeps powerHourlyPoint's
-// shape identical either way.
+// shape identical either way. Minutes with no minute-level CPU fall back to
+// their hour's: hours rebuilt from Beszel's coarse history (cmd/backfill)
+// only have hourly CPU, which would otherwise chart as all gaps.
 const historyMinutelyQuery = `
 	SELECT pm.bucket_start, pm.watts_avg, pm.watts_min, pm.watts_max, 0,
-	       COALESCE(rm.cpu_avg, 0), COALESCE(rm.cpu_min, rm.cpu_avg, 0), COALESCE(rm.cpu_max, rm.cpu_avg, 0)
+	       COALESCE(rm.cpu_avg, rh.cpu_avg), COALESCE(rm.cpu_min, rh.cpu_min, rh.cpu_avg), COALESCE(rm.cpu_max, rh.cpu_max, rh.cpu_avg)
 	FROM power_minutely pm
 	LEFT JOIN resource_minutely rm ON rm.bucket_start = pm.bucket_start AND rm.container = '__host__'
+	LEFT JOIN resource_hourly rh ON rh.bucket_start = pm.bucket_start - pm.bucket_start % 3600 AND rh.container = '__host__'
 	WHERE pm.bucket_start >= ? AND pm.bucket_start < ?
 	ORDER BY pm.bucket_start`
 
@@ -246,56 +251,121 @@ func powerSummaryHandler(db *sql.DB, defaultSpread float64) http.HandlerFunc {
 }
 
 // summaryFor sums kWh and cost for the hours in [fromTS, toTS) using resolve
-// for each hour's price. Shared by /power/summary and /pricing/preview: only
-// the price resolution differs (saved periods vs. a hypothetical override).
+// for each hour's price. Shared by /power/summary, /power/cost and
+// /pricing/preview: only the price resolution differs (saved periods vs. a
+// hypothetical override).
+func summaryFor(db *sql.DB, fromTS, toTS int64, resolve func(time.Time) (pricing.Result, error)) (summaryPeriod, error) {
+	hours, err := hourlyCosts(db, fromTS, toTS, resolve)
+	if err != nil {
+		return summaryPeriod{}, err
+	}
+	result := summaryPeriod{Complete: true}
+	for _, h := range hours {
+		result.add(h.summaryPeriod)
+	}
+	return result, nil
+}
+
+func (s *summaryPeriod) add(o summaryPeriod) {
+	s.KWh += o.KWh
+	s.CostEur += o.CostEur
+	s.Complete = s.Complete && o.Complete
+	s.Provisional = s.Provisional || o.Provisional
+}
+
+type hourCost struct {
+	start int64
+	summaryPeriod
+}
+
+// hourlyCosts prices each power_hourly bucket in [fromTS, toTS). An hour
+// with no PUN reference has Complete=false and no cost, never estimated.
 //
 // The SELECT results are fully buffered before calling resolve: with the DB
 // pool capped at one connection (see store.Open), resolve's own queries
 // (pricing.Resolve reads pricing_periods/pun_prices) would deadlock while
 // this function's own *sql.Rows is still open and pinning that connection.
-func summaryFor(db *sql.DB, fromTS, toTS int64, resolve func(time.Time) (pricing.Result, error)) (summaryPeriod, error) {
-	rows, err := db.Query(`SELECT bucket_start, kwh FROM power_hourly WHERE bucket_start >= ? AND bucket_start < ?`, fromTS, toTS)
+func hourlyCosts(db *sql.DB, fromTS, toTS int64, resolve func(time.Time) (pricing.Result, error)) ([]hourCost, error) {
+	rows, err := db.Query(`SELECT bucket_start, kwh FROM power_hourly WHERE bucket_start >= ? AND bucket_start < ? ORDER BY bucket_start`, fromTS, toTS)
 	if err != nil {
-		return summaryPeriod{}, err
+		return nil, err
 	}
-
-	type bucket struct {
-		start int64
-		kwh   float64
-	}
-	var buckets []bucket
+	var hours []hourCost
 	for rows.Next() {
-		var b bucket
-		if err := rows.Scan(&b.start, &b.kwh); err != nil {
+		var h hourCost
+		if err := rows.Scan(&h.start, &h.KWh); err != nil {
 			rows.Close()
-			return summaryPeriod{}, err
+			return nil, err
 		}
-		buckets = append(buckets, b)
+		hours = append(hours, h)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return summaryPeriod{}, err
+		return nil, err
 	}
 	rows.Close()
 
-	result := summaryPeriod{Complete: true}
-	for _, b := range buckets {
-		result.KWh += b.kwh
-
-		price, err := resolve(time.Unix(b.start, 0))
+	for i := range hours {
+		price, err := resolve(time.Unix(hours[i].start, 0))
 		if err != nil {
-			return summaryPeriod{}, err
+			return nil, err
 		}
-		if !price.Complete {
-			result.Complete = false
-			continue
+		hours[i].Complete = price.Complete
+		if price.Complete {
+			hours[i].Provisional = price.Provisional
+			hours[i].CostEur = hours[i].KWh * price.EurPerKwh
 		}
-		if price.Provisional {
-			result.Provisional = true
-		}
-		result.CostEur += b.kwh * price.EurPerKwh
 	}
-	return result, nil
+	return hours, nil
+}
+
+type costBucket struct {
+	BucketStart int64 `json:"bucket_start"`
+	summaryPeriod
+}
+
+type costResponse struct {
+	Bucket  string        `json:"bucket"` // "hour" | "day"
+	Buckets []costBucket  `json:"buckets"`
+	Total   summaryPeriod `json:"total"`
+}
+
+// powerCostHandler returns cost per hour (ranges up to a week) or per
+// Europe/Rome calendar day (longer ranges) in [from, to), plus the total.
+func powerCostHandler(db *sql.DB, defaultSpread float64) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		from, to, ok := parseUnixRange(w, r)
+		if !ok {
+			return
+		}
+		resolve := func(at time.Time) (pricing.Result, error) { return pricing.Resolve(db, at, defaultSpread) }
+		hours, err := hourlyCosts(db, from, to, resolve)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+
+		resp := costResponse{Bucket: "hour", Buckets: []costBucket{}, Total: summaryPeriod{Complete: true}}
+		daily := time.Duration(to-from)*time.Second > minutelyRangeThreshold
+		if daily {
+			resp.Bucket = "day"
+		}
+		loc := pricing.RomeLocation()
+		for _, h := range hours {
+			resp.Total.add(h.summaryPeriod)
+			key := h.start
+			if daily {
+				t := time.Unix(h.start, 0).In(loc)
+				key = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc).Unix()
+			}
+			if n := len(resp.Buckets); n > 0 && resp.Buckets[n-1].BucketStart == key {
+				resp.Buckets[n-1].add(h.summaryPeriod)
+				continue
+			}
+			resp.Buckets = append(resp.Buckets, costBucket{BucketStart: key, summaryPeriod: h.summaryPeriod})
+		}
+		writeJSON(w, http.StatusOK, resp)
+	}
 }
 
 // parseUnixRange reads from/to (unix seconds) from the query string, writing
