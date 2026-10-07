@@ -387,7 +387,14 @@ async function loadLive() {
     livePowerSince = Math.floor(latestPower.x / 1000);
     updateCurrentPowerKpi(livePowerSince, latestPower.y);
   } else if (!livePowerSince) {
-    document.getElementById('kpiPower').textContent = i18n.t('price.na');
+    // Nothing in the live window (readings stopped over 15 minutes ago):
+    // show the last known reading, flagged stale, rather than n/a.
+    try {
+      const last = await api('/api/v1/power/current');
+      updateCurrentPowerKpi(last.ts, last.watts);
+    } catch (e) {
+      document.getElementById('kpiPower').textContent = i18n.t('price.na');
+    }
   }
   const latestCpu = liveCpuRaw[liveCpuRaw.length - 1];
   if (latestCpu) liveCpuSince = Math.floor(latestCpu.x / 1000);
