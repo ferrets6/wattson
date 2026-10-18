@@ -68,6 +68,7 @@ Optional:
   unset if you're already running this behind a forward-auth proxy.
 - `DEFAULT_SPREAD_EUR_KWH` — spread added to the PUN average when no
   pricing period overrides it (default `0.10`).
+- `SITE_NAME`: appended to the browser tab title (`Wattson · <SITE_NAME>`), handy when several instances or homelab tabs are open. Unset = `Wattson`.
 - `HOSTCPU_PROC_STAT_PATH` — path to read for the live CPU chart (default
   `/proc/stat`, which is the host's own view in a normal Docker setup).
 

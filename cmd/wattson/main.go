@@ -97,6 +97,11 @@ func main() {
 	mux.HandleFunc("GET /login", authenticator.LoginHandler)
 	mux.HandleFunc("GET /callback", authenticator.CallbackHandler)
 	mux.HandleFunc("GET /logout", authenticator.LogoutHandler)
+	index, err := renderIndex(webRoot(), getenv("SITE_NAME", ""))
+	if err != nil {
+		log.Fatalf("rendering index.html: %v", err)
+	}
+	mux.HandleFunc("GET /{$}", indexHandler(index))
 	mux.Handle("/", http.FileServer(http.FS(webRoot())))
 
 	httpServer := &http.Server{
